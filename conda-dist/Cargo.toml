@@ -1,0 +1,22 @@
+[package]
+name = "conda-dist"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.98"
+clap = { version = "4.5.38", features = ["derive"] }
+rattler = { version = "0.38.2" }
+rattler_conda_types = "0.40.3"
+rattler_lock = "0.25.3"
+rattler_repodata_gateway = { version = "0.24.12", features = ["gateway"] }
+rattler_solve = "3.0.8"
+rattler_virtual_packages = "2.2.4"
+serde = { version = "1.0.215", features = ["derive"] }
+tokio = { version = "1.45.1", features = ["macros", "rt-multi-thread"] }
+toml = "0.8.19"
+futures = "0.3.31"
+rattler_digest = "1.1.7"
+rattler_index = "0.26.4"
+reqwest = { version = "0.12.24", default-features = false, features = ["rustls-tls", "stream"] }
+url = "2.5.7"

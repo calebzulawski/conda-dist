@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "conda-dist",
+    "conda-dist-install",
+]
+resolver = "2"
