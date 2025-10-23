@@ -1,6 +1,10 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use anyhow::{Context, Result, bail};
+use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use rattler_conda_types::ChannelConfig;
 
 use crate::{
@@ -68,15 +72,51 @@ pub async fn execute(cli: Cli) -> Result<()> {
         .chain(channels.iter().map(|ch| ch.base_url.to_string()))
         .collect();
 
+    let multi = MultiProgress::with_draw_target(ProgressDrawTarget::stdout());
+    let step_style = ProgressStyle::with_template("{prefix} {msg}")
+        .unwrap_or_else(|_| ProgressStyle::default_spinner());
+
+    let solve_step = multi.add(ProgressBar::new_spinner());
+    solve_step.set_style(step_style.clone());
+    solve_step.set_prefix("[ ]");
+    solve_step.set_message("Solve environment");
+    solve_step.tick();
+
+    let download_step = multi.add(ProgressBar::new_spinner());
+    download_step.set_style(step_style.clone());
+    download_step.set_prefix("[ ]");
+    download_step.set_message("Download packages");
+    download_step.tick();
+
+    let installer_step = multi.add(ProgressBar::new_spinner());
+    installer_step.set_style(step_style.clone());
+    installer_step.set_prefix("[ ]");
+    installer_step.set_message("Create installers");
+    installer_step.tick();
+
     let solve_platforms = conda::augment_with_noarch(&target_platforms);
-    let solved_records = conda::solve_environment(
+    solve_step.set_prefix("[…]");
+    solve_step.enable_steady_tick(Duration::from_millis(120));
+    let solved_records = match conda::solve_environment(
         &gateway,
         &channels,
         &specs,
         &solve_platforms,
         virtual_packages,
     )
-    .await?;
+    .await
+    {
+        Ok(records) => {
+            solve_step.set_prefix("[✔]");
+            solve_step.finish_with_message("Solve environment");
+            records
+        }
+        Err(err) => {
+            solve_step.set_prefix("[✖]");
+            solve_step.finish_with_message("Solve environment (failed)");
+            return Err(err);
+        }
+    };
 
     let bundle_metadata = installer::PreparedBundleMetadata::from_config(
         environment_name,
@@ -85,7 +125,22 @@ pub async fn execute(cli: Cli) -> Result<()> {
         &solved_records,
     )?;
 
-    conda::download_and_index_packages(&solved_records, &channel_dir).await?;
+    download_step.set_prefix("[…]");
+    let downloaded_count =
+        match conda::download_and_index_packages(&solved_records, &channel_dir, &download_step)
+            .await
+        {
+            Ok(count) => {
+                download_step.set_prefix("[✔]");
+                download_step.finish_with_message(format!("Download packages ({count}/{count})"));
+                count
+            }
+            Err(err) => {
+                download_step.set_prefix("[✖]");
+                download_step.finish_with_message("Download packages (failed)");
+                return Err(err);
+            }
+        };
 
     let lock_file = conda::build_lockfile(environment_name, &channel_urls, &solved_records)?;
     lock_file
@@ -94,13 +149,43 @@ pub async fn execute(cli: Cli) -> Result<()> {
 
     let installer_platforms =
         installer::resolve_installer_platforms(installer_platform, &target_platforms)?;
-    installer::emit_installers(
-        environment_name,
+
+    installer_step.set_prefix("[…]");
+    installer_step.enable_steady_tick(Duration::from_millis(120));
+    let written_paths = match installer::create_installers(
         &script_path,
+        environment_name,
         &channel_dir,
         &installer_platforms,
         &bundle_metadata,
-    )?;
+        &installer_step,
+    ) {
+        Ok(paths) => {
+            installer_step.set_prefix("[✔]");
+            installer_step.finish_with_message(format!(
+                "Create installers ({}/{})",
+                paths.len(),
+                installer_platforms.len()
+            ));
+            paths
+        }
+        Err(err) => {
+            installer_step.set_prefix("[✖]");
+            installer_step.finish_with_message("Create installers (failed)");
+            return Err(err);
+        }
+    };
+
+    if downloaded_count == 0 {
+        let _ = multi.println("No packages required downloading.");
+    }
+
+    if !written_paths.is_empty() {
+        let _ = multi.println("Installer outputs:");
+        for path in written_paths {
+            let _ = multi.println(format!("  - {}", path.display()));
+        }
+    }
 
     Ok(())
 }

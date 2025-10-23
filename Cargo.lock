@@ -1035,6 +1035,7 @@ dependencies = [
  "clap",
  "flate2",
  "futures",
+ "indicatif 0.17.11",
  "rattler",
  "rattler_conda_types",
  "rattler_digest",
@@ -1076,6 +1077,19 @@ name = "configparser"
 version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e57e3272f0190c3f1584272d613719ba5fc7df7f4942fe542e63d949cf3a649b"
+
+[[package]]
+name = "console"
+version = "0.15.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "054ccb5b10f9f2cbf51eb355ca1d05c2d279ce1804688d0db74b4733a5aeafd8"
+dependencies = [
+ "encode_unicode",
+ "libc",
+ "once_cell",
+ "unicode-width",
+ "windows-sys 0.59.0",
+]
 
 [[package]]
 name = "console"
@@ -2244,11 +2258,24 @@ dependencies = [
 
 [[package]]
 name = "indicatif"
+version = "0.17.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "183b3088984b400f4cfac3620d5e076c84da5364016b4f49473de574b2586235"
+dependencies = [
+ "console 0.15.11",
+ "number_prefix",
+ "portable-atomic",
+ "unicode-width",
+ "web-time",
+]
+
+[[package]]
+name = "indicatif"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2e0ddd45fe8e09ee1a607920b12271f8a5528a41ecaf6e1d1440d6493315b6b"
 dependencies = [
- "console",
+ "console 0.16.1",
  "portable-atomic",
  "unicode-width",
  "unit-prefix",
@@ -2729,6 +2756,12 @@ dependencies = [
  "hermit-abi",
  "libc",
 ]
+
+[[package]]
+name = "number_prefix"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "830b246a0e5f20af87141b25c173cd1b609bd7779a4617d6ec582abaf90870f3"
 
 [[package]]
 name = "once_cell"
@@ -3402,7 +3435,7 @@ version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e69a09321ca7fe047de67bf9f64c21bed5321e8309583e3e36775718582f021d"
 dependencies = [
- "console",
+ "console 0.16.1",
  "fs-err",
  "indexmap 2.12.0",
  "rattler_conda_types",
@@ -3444,11 +3477,11 @@ dependencies = [
  "chrono",
  "clap",
  "clap-verbosity-flag",
- "console",
+ "console 0.16.1",
  "fs-err",
  "futures",
  "fxhash",
- "indicatif",
+ "indicatif 0.18.1",
  "opendal",
  "rattler_conda_types",
  "rattler_config",

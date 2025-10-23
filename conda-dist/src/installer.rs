@@ -13,6 +13,8 @@ use rattler_conda_types::{PackageName, Platform, RepoDataRecord};
 use serde::Serialize;
 use tar::{Builder, EntryType, Header, HeaderMode};
 
+use indicatif::ProgressBar;
+
 use crate::{conda::LOCKFILE_NAME, config::BundleMetadataConfig};
 
 include!(concat!(env!("OUT_DIR"), "/installers.rs"));
@@ -231,13 +233,14 @@ pub fn resolve_installer_platforms(
     }
 }
 
-pub fn emit_installers(
-    environment_name: &str,
+pub fn create_installers(
     script_path: &Path,
+    environment_name: &str,
     channel_dir: &Path,
     selected_platforms: &[Platform],
     metadata: &PreparedBundleMetadata,
-) -> Result<()> {
+    progress: &ProgressBar,
+) -> Result<Vec<PathBuf>> {
     let output_dir = installer_output_directory(script_path)?;
 
     if script_path.exists() && !script_path.is_dir() {
@@ -264,7 +267,18 @@ pub fn emit_installers(
         )
     })?;
 
-    for platform in selected_platforms {
+    let total = selected_platforms.len();
+    if total == 0 {
+        progress.set_message("Create installers (0/0)");
+        progress.tick();
+        return Ok(Vec::new());
+    }
+
+    progress.set_message(format!("Create installers (0/{total})"));
+    progress.tick();
+
+    let mut written = Vec::new();
+    for (index, platform) in selected_platforms.iter().enumerate() {
         let installer_bytes = embedded_installer_for_platform(*platform).with_context(|| {
             format!(
                 "no embedded installer available for platform {}",
@@ -290,13 +304,14 @@ pub fn emit_installers(
         let target_path = output_dir.join(installer_name);
         write_self_extracting_script(&target_path, environment_name, &archive_bytes)
             .with_context(|| format!("failed to write installer {}", target_path.display()))?;
-        println!(
-            "self-extracting installer written to {}",
-            target_path.display()
-        );
+        written.push(target_path);
+
+        let done = index + 1;
+        progress.set_message(format!("Create installers ({done}/{total})"));
+        progress.tick();
     }
 
-    Ok(())
+    Ok(written)
 }
 
 fn embedded_installer_for_platform(platform: Platform) -> Option<&'static [u8]> {

@@ -1,7 +1,0 @@
-# Example manifest for conda-dist
-name = "bash"
-channels = ["conda-forge"]
-platforms = ["linux-64", "linux-aarch64"]
-
-[dependencies]
-bash = "*"

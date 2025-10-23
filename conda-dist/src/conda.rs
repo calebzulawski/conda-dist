@@ -1,7 +1,16 @@
-use std::{collections::HashSet, path::Path, str::FromStr};
+use std::{
+    collections::HashSet,
+    path::Path,
+    str::FromStr,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 use anyhow::{Context, Result, bail};
 use futures::{StreamExt, TryStreamExt, stream};
+use indicatif::ProgressBar;
 use rattler::default_cache_dir;
 use rattler_conda_types::{
     Channel, ChannelConfig, GenericVirtualPackage, MatchSpec, Platform, RepoDataRecord,
@@ -128,7 +137,10 @@ pub async fn solve_environment(
 pub async fn download_and_index_packages(
     records: &[RepoDataRecord],
     channel_dir: &Path,
-) -> Result<()> {
+    progress: &ProgressBar,
+) -> Result<usize> {
+    const MAX_PARALLEL_DOWNLOADS: usize = 8;
+
     #[derive(Clone)]
     struct PackageEntry {
         subdir: String,
@@ -168,10 +180,22 @@ pub async fn download_and_index_packages(
         .build()
         .context("failed to construct HTTP client")?;
 
+    let channel_dir_buf = channel_dir.to_path_buf();
+    let total_downloads = entries.len();
+    progress.set_message(format!("Download packages (0/{total_downloads})"));
+    progress.tick();
+
+    if total_downloads == 0 {
+        return Ok(0);
+    }
+
+    let completed = Arc::new(AtomicUsize::new(0));
     stream::iter(entries.into_iter())
         .map(|entry| {
             let client = client.clone();
-            let channel_dir = channel_dir.to_path_buf();
+            let channel_dir = channel_dir_buf.clone();
+            let progress = progress.clone();
+            let completed = completed.clone();
             async move {
                 let PackageEntry {
                     subdir,
@@ -220,10 +244,14 @@ pub async fn download_and_index_packages(
                     .await
                     .with_context(|| format!("failed to persist {}", target_path.display()))?;
 
+                let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                progress.set_message(format!("Download packages ({done}/{total_downloads})"));
+                progress.tick();
+
                 Ok::<(), anyhow::Error>(())
             }
         })
-        .buffer_unordered(8)
+        .buffer_unordered(MAX_PARALLEL_DOWNLOADS)
         .try_collect::<()>()
         .await?;
 
@@ -249,7 +277,7 @@ pub async fn download_and_index_packages(
     .await
     .context("failed to index downloaded packages")?;
 
-    Ok(())
+    Ok(total_downloads)
 }
 
 pub fn build_lockfile(
