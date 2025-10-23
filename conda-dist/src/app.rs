@@ -78,6 +78,13 @@ pub async fn execute(cli: Cli) -> Result<()> {
     )
     .await?;
 
+    let bundle_metadata = installer::PreparedBundleMetadata::from_config(
+        environment_name,
+        config.metadata(),
+        &manifest_dir,
+        &solved_records,
+    )?;
+
     conda::download_and_index_packages(&solved_records, &channel_dir).await?;
 
     let lock_file = conda::build_lockfile(environment_name, &channel_urls, &solved_records)?;
@@ -92,6 +99,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
         &script_path,
         &channel_dir,
         &installer_platforms,
+        &bundle_metadata,
     )?;
 
     Ok(())

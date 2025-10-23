@@ -9,12 +9,138 @@ use std::{
 use anyhow::{Context, Result, bail};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use flate2::{Compression, write::GzEncoder};
-use rattler_conda_types::Platform;
+use rattler_conda_types::{PackageName, Platform, RepoDataRecord};
+use serde::Serialize;
 use tar::{Builder, EntryType, Header, HeaderMode};
 
-use crate::conda::LOCKFILE_NAME;
+use crate::{conda::LOCKFILE_NAME, config::BundleMetadataConfig};
 
 include!(concat!(env!("OUT_DIR"), "/installers.rs"));
+
+const BUNDLE_METADATA_FILE: &str = "bundle-metadata.json";
+const POST_INSTALL_SCRIPT_NAME: &str = "post-install.sh";
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BundleMetadataManifest {
+    pub display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_notes: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub success_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub featured_packages: Vec<FeaturedPackageManifest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_install: Option<PostInstallManifest>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FeaturedPackageManifest {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PostInstallManifest {
+    pub script: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PostInstallArtifact {
+    pub file_name: String,
+    pub bytes: Vec<u8>,
+    pub executable: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreparedBundleMetadata {
+    pub manifest: BundleMetadataManifest,
+    pub post_install: Option<PostInstallArtifact>,
+}
+
+impl PreparedBundleMetadata {
+    pub fn from_config(
+        environment_name: &str,
+        config: Option<&BundleMetadataConfig>,
+        manifest_dir: &Path,
+        records: &[RepoDataRecord],
+    ) -> Result<Self> {
+        let config = config.cloned().unwrap_or_default();
+        let BundleMetadataConfig {
+            display_name,
+            description,
+            release_notes,
+            success_message,
+            featured_packages,
+            post_install_script,
+        } = config;
+
+        let display_name = display_name.unwrap_or_else(|| environment_name.to_string());
+
+        let available_names: HashSet<PackageName> = records
+            .iter()
+            .map(|record| record.package_record.name.clone())
+            .collect();
+
+        let mut seen = HashSet::new();
+        let mut featured = Vec::new();
+        for entry in featured_packages {
+            let package_name = PackageName::from_str(&entry.name).with_context(|| {
+                format!(
+                    "featured package '{}' is not a valid package name",
+                    entry.name
+                )
+            })?;
+
+            if !available_names.contains(&package_name) {
+                bail!(
+                    "featured package '{}' was not found in the resolved environment",
+                    entry.name
+                );
+            }
+
+            if seen.insert(package_name.clone()) {
+                featured.push(FeaturedPackageManifest {
+                    name: package_name.as_normalized().to_string(),
+                });
+            }
+        }
+
+        let post_install = if let Some(script_path) = post_install_script {
+            let resolved = manifest_dir.join(&script_path);
+            let script_bytes = fs::read(&resolved).with_context(|| {
+                format!(
+                    "failed to read post-install script at {}",
+                    resolved.display()
+                )
+            })?;
+
+            Some(PostInstallArtifact {
+                file_name: POST_INSTALL_SCRIPT_NAME.to_string(),
+                bytes: script_bytes,
+                executable: true,
+            })
+        } else {
+            None
+        };
+
+        let manifest = BundleMetadataManifest {
+            display_name,
+            description,
+            release_notes,
+            success_message,
+            featured_packages: featured,
+            post_install: post_install.as_ref().map(|artifact| PostInstallManifest {
+                script: artifact.file_name.clone(),
+            }),
+        };
+
+        Ok(Self {
+            manifest,
+            post_install,
+        })
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum InstallerPlatformSelection {
@@ -110,6 +236,7 @@ pub fn emit_installers(
     script_path: &Path,
     channel_dir: &Path,
     selected_platforms: &[Platform],
+    metadata: &PreparedBundleMetadata,
 ) -> Result<()> {
     let output_dir = installer_output_directory(script_path)?;
 
@@ -145,14 +272,19 @@ pub fn emit_installers(
             )
         })?;
 
-        let archive_bytes =
-            create_tar_gz_for_platform(channel_dir, environment_name, *platform, installer_bytes)
-                .with_context(|| {
-                format!(
-                    "failed to prepare archive for platform {}",
-                    platform.as_str()
-                )
-            })?;
+        let archive_bytes = create_tar_gz_for_platform(
+            channel_dir,
+            environment_name,
+            *platform,
+            installer_bytes,
+            metadata,
+        )
+        .with_context(|| {
+            format!(
+                "failed to prepare archive for platform {}",
+                platform.as_str()
+            )
+        })?;
 
         let installer_name = format!("{environment_name}-{}.sh", platform.as_str());
         let target_path = output_dir.join(installer_name);
@@ -200,6 +332,7 @@ fn create_tar_gz_for_platform(
     root_name: &str,
     platform: Platform,
     installer_bytes: &[u8],
+    metadata: &PreparedBundleMetadata,
 ) -> Result<Vec<u8>> {
     let encoder = GzEncoder::new(Vec::new(), Compression::new(6));
     let mut builder = Builder::new(encoder);
@@ -258,6 +391,40 @@ fn create_tar_gz_for_platform(
                 .append_dir_all(format!("{root_name}/{subdir}"), &path)
                 .with_context(|| format!("failed to add {} to archive", path.display()))?;
         }
+    }
+
+    let metadata_bytes =
+        serde_json::to_vec(&metadata.manifest).context("failed to serialize bundle metadata")?;
+    let mut metadata_header = Header::new_gnu();
+    metadata_header.set_entry_type(EntryType::Regular);
+    metadata_header.set_mode(0o644);
+    metadata_header.set_size(metadata_bytes.len() as u64);
+    metadata_header.set_uid(0);
+    metadata_header.set_gid(0);
+    metadata_header.set_mtime(0);
+    metadata_header.set_cksum();
+    let mut metadata_cursor = Cursor::new(metadata_bytes.as_slice());
+    builder.append_data(
+        &mut metadata_header,
+        format!("{root_name}/{BUNDLE_METADATA_FILE}"),
+        &mut metadata_cursor,
+    )?;
+
+    if let Some(script) = &metadata.post_install {
+        let mut script_header = Header::new_gnu();
+        script_header.set_entry_type(EntryType::Regular);
+        script_header.set_mode(if script.executable { 0o755 } else { 0o644 });
+        script_header.set_size(script.bytes.len() as u64);
+        script_header.set_uid(0);
+        script_header.set_gid(0);
+        script_header.set_mtime(0);
+        script_header.set_cksum();
+        let mut script_cursor = Cursor::new(script.bytes.as_slice());
+        builder.append_data(
+            &mut script_header,
+            format!("{root_name}/{}", script.file_name),
+            &mut script_cursor,
+        )?;
     }
 
     let installer_archive_path = format!("{root_name}/installer");

@@ -37,9 +37,27 @@ if [[ -z "${INSTALLER_SCRIPT}" ]]; then
 fi
 echo "==> Installer generated at ${INSTALLER_SCRIPT}"
 
+echo "==> Displaying bundle summary"
+bash "${INSTALLER_SCRIPT}" --summary
+
+echo "==> Listing packages (table)"
+bash "${INSTALLER_SCRIPT}" --list-packages
+
+echo "==> Listing packages (JSON)"
+PACKAGE_JSON="$(bash "${INSTALLER_SCRIPT}" --list-packages-json)"
+echo "$PACKAGE_JSON"
+
 echo "==> Installing into ${INSTALL_PREFIX}"
 mkdir -p "${INSTALL_PREFIX}"
 bash "${INSTALLER_SCRIPT}" "${INSTALL_PREFIX}"
+
+POST_INSTALL_LOG="${INSTALL_PREFIX}/post-install.log"
+if [[ ! -s "${POST_INSTALL_LOG}" ]]; then
+    echo "error: post-install log not created"
+    exit 1
+fi
+echo "Post-install log created at ${POST_INSTALL_LOG}"
+tail -n +1 "${POST_INSTALL_LOG}"
 
 echo "==> Running installed bash"
 "${INSTALL_PREFIX}/bin/bash" --version

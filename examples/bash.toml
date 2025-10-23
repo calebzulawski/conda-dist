@@ -4,3 +4,19 @@ platforms = ["linux-64"]
 
 [dependencies]
 bash = "*"
+
+[metadata]
+display_name = "Portable Bash Environment"
+description = """
+Ships a self-contained GNU bash shell for linux-64 systems. Useful for quick scripting on hosts 
+that do not provide a recent bash runtime by default.
+"""
+release_notes = """
+- Initial portable release of the bash environment.
+- Includes GNU bash and its runtime dependencies from conda-forge.
+"""
+success_message = "Bash is ready. Launch it via <prefix>/bin/bash."
+post_install_script = "post-install.sh"
+
+[[metadata.featured_packages]]
+name = "bash"

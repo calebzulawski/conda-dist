@@ -12,6 +12,8 @@ pub struct CondaDistConfig {
     #[serde(default)]
     platforms: Vec<String>,
     dependencies: DependencySpec,
+    #[serde(default)]
+    metadata: Option<BundleMetadataConfig>,
 }
 
 impl CondaDistConfig {
@@ -29,6 +31,10 @@ impl CondaDistConfig {
 
     pub fn dependencies(&self) -> &DependencySpec {
         &self.dependencies
+    }
+
+    pub fn metadata(&self) -> Option<&BundleMetadataConfig> {
+        self.metadata.as_ref()
     }
 }
 
@@ -69,4 +75,25 @@ pub fn load_manifest(path: &Path) -> Result<CondaDistConfig> {
     let raw = fs::read_to_string(path)
         .with_context(|| format!("failed to read manifest at {}", path.display()))?;
     toml::from_str(&raw).with_context(|| format!("failed to parse manifest {}", path.display()))
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct BundleMetadataConfig {
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub release_notes: Option<String>,
+    #[serde(default)]
+    pub success_message: Option<String>,
+    #[serde(default)]
+    pub featured_packages: Vec<FeaturedPackageConfig>,
+    #[serde(default)]
+    pub post_install_script: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FeaturedPackageConfig {
+    pub name: String,
 }
