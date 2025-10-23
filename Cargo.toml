@@ -4,3 +4,6 @@ members = [
     "conda-dist-install",
 ]
 resolver = "2"
+
+[profile.release]
+strip = "symbols"

@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, HashSet},
     fs,
-    io::Write,
+    io::{Cursor, Write},
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -26,7 +26,9 @@ use rattler_solve::{
 use rattler_virtual_packages::{VirtualPackage, VirtualPackageOverrides};
 use reqwest::Client;
 use serde::Deserialize;
-use tar::{Builder, HeaderMode};
+use tar::{Builder, EntryType, Header, HeaderMode};
+
+include!(concat!(env!("OUT_DIR"), "/installers.rs"));
 
 const DEFAULT_CHANNEL: &str = "conda-forge";
 const LOCKFILE_NAME: &str = "conda-lock.yml";
@@ -344,6 +346,14 @@ fn resolve_installer_platforms(
     }
 }
 
+fn embedded_installer_for_platform(platform: Platform) -> Option<&'static [u8]> {
+    let key = platform.as_str();
+    INSTALLERS
+        .iter()
+        .find(|(name, _)| *name == key)
+        .map(|(_, bytes)| *bytes)
+}
+
 fn emit_installers(
     environment_name: &str,
     script_path: &Path,
@@ -377,8 +387,16 @@ fn emit_installers(
     })?;
 
     for platform in selected_platforms {
-        let archive_bytes = create_tar_gz_for_platform(channel_dir, environment_name, *platform)
-            .with_context(|| {
+        let installer_bytes = embedded_installer_for_platform(*platform).with_context(|| {
+            format!(
+                "no embedded installer available for platform {}",
+                platform.as_str()
+            )
+        })?;
+
+        let archive_bytes =
+            create_tar_gz_for_platform(channel_dir, environment_name, *platform, installer_bytes)
+                .with_context(|| {
                 format!(
                     "failed to prepare archive for platform {}",
                     platform.as_str()
@@ -422,6 +440,7 @@ fn create_tar_gz_for_platform(
     root_dir: &Path,
     root_name: &str,
     platform: Platform,
+    installer_bytes: &[u8],
 ) -> Result<Vec<u8>> {
     let encoder = GzEncoder::new(Vec::new(), Compression::new(6));
     let mut builder = Builder::new(encoder);
@@ -482,6 +501,18 @@ fn create_tar_gz_for_platform(
         }
     }
 
+    let installer_archive_path = format!("{root_name}/installer");
+    let mut header = Header::new_gnu();
+    header.set_entry_type(EntryType::Regular);
+    header.set_mode(0o755);
+    header.set_size(installer_bytes.len() as u64);
+    header.set_uid(0);
+    header.set_gid(0);
+    header.set_mtime(0);
+    header.set_cksum();
+    let mut cursor = Cursor::new(installer_bytes);
+    builder.append_data(&mut header, installer_archive_path, &mut cursor)?;
+
     let encoder = builder
         .into_inner()
         .context("failed to finalize tar archive")?;
@@ -502,11 +533,31 @@ CONDADIST_ENV_NAME
 )
 
 temp_dir="$(mktemp -d)"
+cleanup() {{
+    rm -rf "$temp_dir"
+}}
+trap cleanup EXIT INT TERM
+
 payload_line=$(awk '/^__ARCHIVE_BELOW__/ {{ print NR + 1; exit }}' "$0")
 tail -n +"$payload_line" "$0" | base64 -d | tar -xz -C "$temp_dir"
-extracted_dir="$temp_dir/$env_name"
-printf '%s\n' "$extracted_dir"
-exit 0
+
+bundle_dir="$temp_dir/$env_name"
+installer_path="$bundle_dir/installer"
+
+if [ ! -x "$installer_path" ]; then
+    chmod +x "$installer_path"
+fi
+
+export CONDA_DIST_BUNDLE_DIR="$bundle_dir"
+export CONDA_DIST_PROJECT_NAME="$env_name"
+
+if "$installer_path" "$@"; then
+    status=0
+else
+    status=$?
+fi
+
+exit "$status"
 
 __ARCHIVE_BELOW__
 "#,
