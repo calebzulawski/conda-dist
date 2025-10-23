@@ -20,3 +20,7 @@ rattler_digest = "1.1.7"
 rattler_index = "0.26.4"
 reqwest = { version = "0.12.24", default-features = false, features = ["rustls-tls", "stream"] }
 url = "2.5.7"
+tempfile = "3.14.0"
+base64 = "0.22.1"
+flate2 = "1.0.35"
+tar = "0.4.43"

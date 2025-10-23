@@ -1025,7 +1025,9 @@ name = "conda-dist"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "clap",
+ "flate2",
  "futures",
  "rattler",
  "rattler_conda_types",
@@ -1037,6 +1039,8 @@ dependencies = [
  "rattler_virtual_packages",
  "reqwest",
  "serde",
+ "tar",
+ "tempfile",
  "tokio",
  "toml 0.8.23",
  "url",
