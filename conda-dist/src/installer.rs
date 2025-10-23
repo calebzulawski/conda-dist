@@ -410,49 +410,28 @@ fn create_tar_gz_for_platform(
 
     let metadata_bytes =
         serde_json::to_vec(&metadata.manifest).context("failed to serialize bundle metadata")?;
-    let mut metadata_header = Header::new_gnu();
-    metadata_header.set_entry_type(EntryType::Regular);
-    metadata_header.set_mode(0o644);
-    metadata_header.set_size(metadata_bytes.len() as u64);
-    metadata_header.set_uid(0);
-    metadata_header.set_gid(0);
-    metadata_header.set_mtime(0);
-    metadata_header.set_cksum();
-    let mut metadata_cursor = Cursor::new(metadata_bytes.as_slice());
-    builder.append_data(
-        &mut metadata_header,
+    append_regular_file(
+        &mut builder,
         format!("{root_name}/{BUNDLE_METADATA_FILE}"),
-        &mut metadata_cursor,
+        metadata_bytes.as_slice(),
+        0o644,
     )?;
 
     if let Some(script) = &metadata.post_install {
-        let mut script_header = Header::new_gnu();
-        script_header.set_entry_type(EntryType::Regular);
-        script_header.set_mode(if script.executable { 0o755 } else { 0o644 });
-        script_header.set_size(script.bytes.len() as u64);
-        script_header.set_uid(0);
-        script_header.set_gid(0);
-        script_header.set_mtime(0);
-        script_header.set_cksum();
-        let mut script_cursor = Cursor::new(script.bytes.as_slice());
-        builder.append_data(
-            &mut script_header,
+        append_regular_file(
+            &mut builder,
             format!("{root_name}/{}", script.file_name),
-            &mut script_cursor,
+            script.bytes.as_slice(),
+            if script.executable { 0o755 } else { 0o644 },
         )?;
     }
 
-    let installer_archive_path = format!("{root_name}/installer");
-    let mut header = Header::new_gnu();
-    header.set_entry_type(EntryType::Regular);
-    header.set_mode(0o755);
-    header.set_size(installer_bytes.len() as u64);
-    header.set_uid(0);
-    header.set_gid(0);
-    header.set_mtime(0);
-    header.set_cksum();
-    let mut cursor = Cursor::new(installer_bytes);
-    builder.append_data(&mut header, installer_archive_path, &mut cursor)?;
+    append_regular_file(
+        &mut builder,
+        format!("{root_name}/installer"),
+        installer_bytes,
+        0o755,
+    )?;
 
     let encoder = builder
         .into_inner()
@@ -461,6 +440,27 @@ fn create_tar_gz_for_platform(
         .finish()
         .context("failed to complete gzip compression")?;
     Ok(archive)
+}
+
+fn append_regular_file<W: Write>(
+    builder: &mut Builder<W>,
+    path: String,
+    bytes: &[u8],
+    mode: u32,
+) -> Result<()> {
+    let mut header = Header::new_gnu();
+    header.set_entry_type(EntryType::Regular);
+    header.set_mode(mode);
+    header.set_size(bytes.len() as u64);
+    header.set_uid(0);
+    header.set_gid(0);
+    header.set_mtime(0);
+    header.set_cksum();
+    let mut cursor = Cursor::new(bytes);
+    builder
+        .append_data(&mut header, &path, &mut cursor)
+        .with_context(|| format!("failed to add {} to archive", path))?;
+    Ok(())
 }
 
 fn installer_prologue(environment_name: &str) -> String {

@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    path::Path,
+    path::{Path, PathBuf},
     str::FromStr,
     sync::{
         Arc,
@@ -27,6 +27,14 @@ use reqwest::Client;
 
 pub const DEFAULT_CHANNEL: &str = "conda-forge";
 pub const LOCKFILE_NAME: &str = "conda-lock.yml";
+
+#[derive(Clone)]
+struct PackageEntry {
+    subdir: String,
+    file_name: String,
+    url: String,
+    sha256: Option<Sha256Hash>,
+}
 
 pub fn parse_channels(channel_strings: &[String], config: &ChannelConfig) -> Result<Vec<Channel>> {
     channel_strings
@@ -141,14 +149,6 @@ pub async fn download_and_index_packages(
 ) -> Result<usize> {
     const MAX_PARALLEL_DOWNLOADS: usize = 8;
 
-    #[derive(Clone)]
-    struct PackageEntry {
-        subdir: String,
-        file_name: String,
-        url: String,
-        sha256: Option<Sha256Hash>,
-    }
-
     let mut seen = HashSet::new();
     let mut entries = Vec::new();
     for record in records {
@@ -196,60 +196,14 @@ pub async fn download_and_index_packages(
             let channel_dir = channel_dir_buf.clone();
             let progress = progress.clone();
             let completed = completed.clone();
-            async move {
-                let PackageEntry {
-                    subdir,
-                    file_name,
-                    url,
-                    sha256,
-                } = entry;
-
-                let subdir_dir = channel_dir.join(&subdir);
-                tokio::fs::create_dir_all(&subdir_dir)
-                    .await
-                    .with_context(|| {
-                        format!("failed to create channel subdir {}", subdir_dir.display())
-                    })?;
-
-                let target_path = subdir_dir.join(&file_name);
-                let temp_path = target_path.with_extension("part");
-                if tokio::fs::metadata(&temp_path).await.is_ok() {
-                    let _ = tokio::fs::remove_file(&temp_path).await;
-                }
-
-                let response = client
-                    .get(url.clone())
-                    .send()
-                    .await
-                    .with_context(|| format!("failed to download {url}"))?
-                    .error_for_status()
-                    .with_context(|| format!("request returned error status for {url}"))?;
-
-                let bytes = response
-                    .bytes()
-                    .await
-                    .with_context(|| format!("failed to read response body for {url}"))?;
-
-                if let Some(expected) = sha256 {
-                    let computed = compute_bytes_digest::<Sha256>(&bytes);
-                    if computed != expected {
-                        bail!("downloaded package '{url}' failed checksum validation");
-                    }
-                }
-
-                tokio::fs::write(&temp_path, &bytes)
-                    .await
-                    .with_context(|| format!("failed to write {}", temp_path.display()))?;
-                tokio::fs::rename(&temp_path, &target_path)
-                    .await
-                    .with_context(|| format!("failed to persist {}", target_path.display()))?;
-
-                let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                progress.set_message(format!("Download packages ({done}/{total_downloads})"));
-                progress.tick();
-
-                Ok::<(), anyhow::Error>(())
-            }
+            fetch_package(
+                entry,
+                client,
+                channel_dir,
+                progress,
+                completed,
+                total_downloads,
+            )
         })
         .buffer_unordered(MAX_PARALLEL_DOWNLOADS)
         .try_collect::<()>()
@@ -278,6 +232,66 @@ pub async fn download_and_index_packages(
     .context("failed to index downloaded packages")?;
 
     Ok(total_downloads)
+}
+
+async fn fetch_package(
+    entry: PackageEntry,
+    client: Client,
+    channel_dir: PathBuf,
+    progress: ProgressBar,
+    completed: Arc<AtomicUsize>,
+    total_downloads: usize,
+) -> Result<()> {
+    let PackageEntry {
+        subdir,
+        file_name,
+        url,
+        sha256,
+    } = entry;
+
+    let subdir_dir = channel_dir.join(&subdir);
+    tokio::fs::create_dir_all(&subdir_dir)
+        .await
+        .with_context(|| format!("failed to create channel subdir {}", subdir_dir.display()))?;
+
+    let target_path = subdir_dir.join(&file_name);
+    let temp_path = target_path.with_extension("part");
+    if tokio::fs::metadata(&temp_path).await.is_ok() {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+    }
+
+    let response = client
+        .get(url.clone())
+        .send()
+        .await
+        .with_context(|| format!("failed to download {url}"))?
+        .error_for_status()
+        .with_context(|| format!("request returned error status for {url}"))?;
+
+    let bytes = response
+        .bytes()
+        .await
+        .with_context(|| format!("failed to read response body for {url}"))?;
+
+    if let Some(expected) = sha256 {
+        let computed = compute_bytes_digest::<Sha256>(&bytes);
+        if computed != expected {
+            bail!("downloaded package '{url}' failed checksum validation");
+        }
+    }
+
+    tokio::fs::write(&temp_path, &bytes)
+        .await
+        .with_context(|| format!("failed to write {}", temp_path.display()))?;
+    tokio::fs::rename(&temp_path, &target_path)
+        .await
+        .with_context(|| format!("failed to persist {}", target_path.display()))?;
+
+    let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+    progress.set_message(format!("Download packages ({done}/{total_downloads})"));
+    progress.tick();
+
+    Ok(())
 }
 
 pub fn build_lockfile(

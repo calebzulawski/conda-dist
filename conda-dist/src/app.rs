@@ -1,4 +1,5 @@
 use std::{
+    future::Future,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -76,47 +77,25 @@ pub async fn execute(cli: Cli) -> Result<()> {
     let step_style = ProgressStyle::with_template("{prefix} {msg}")
         .unwrap_or_else(|_| ProgressStyle::default_spinner());
 
-    let solve_step = multi.add(ProgressBar::new_spinner());
-    solve_step.set_style(step_style.clone());
-    solve_step.set_prefix("[ ]");
-    solve_step.set_message("Solve environment");
-    solve_step.tick();
-
-    let download_step = multi.add(ProgressBar::new_spinner());
-    download_step.set_style(step_style.clone());
-    download_step.set_prefix("[ ]");
-    download_step.set_message("Download packages");
-    download_step.tick();
-
-    let installer_step = multi.add(ProgressBar::new_spinner());
-    installer_step.set_style(step_style.clone());
-    installer_step.set_prefix("[ ]");
-    installer_step.set_message("Create installers");
-    installer_step.tick();
+    let solve_step = progress_step(&multi, &step_style, "Solve environment");
+    let download_step = progress_step(&multi, &step_style, "Download packages");
+    let installer_step = progress_step(&multi, &step_style, "Create installers");
 
     let solve_platforms = conda::augment_with_noarch(&target_platforms);
-    solve_step.set_prefix("[…]");
-    solve_step.enable_steady_tick(Duration::from_millis(120));
-    let solved_records = match conda::solve_environment(
-        &gateway,
-        &channels,
-        &specs,
-        &solve_platforms,
-        virtual_packages,
+    let solved_records = run_step(
+        &solve_step,
+        "Solve environment",
+        Some(Duration::from_millis(120)),
+        conda::solve_environment(
+            &gateway,
+            &channels,
+            &specs,
+            &solve_platforms,
+            virtual_packages,
+        ),
+        |_| "Solve environment".to_string(),
     )
-    .await
-    {
-        Ok(records) => {
-            solve_step.set_prefix("[✔]");
-            solve_step.finish_with_message("Solve environment");
-            records
-        }
-        Err(err) => {
-            solve_step.set_prefix("[✖]");
-            solve_step.finish_with_message("Solve environment (failed)");
-            return Err(err);
-        }
-    };
+    .await?;
 
     let bundle_metadata = installer::PreparedBundleMetadata::from_config(
         environment_name,
@@ -125,22 +104,14 @@ pub async fn execute(cli: Cli) -> Result<()> {
         &solved_records,
     )?;
 
-    download_step.set_prefix("[…]");
-    let downloaded_count =
-        match conda::download_and_index_packages(&solved_records, &channel_dir, &download_step)
-            .await
-        {
-            Ok(count) => {
-                download_step.set_prefix("[✔]");
-                download_step.finish_with_message(format!("Download packages ({count}/{count})"));
-                count
-            }
-            Err(err) => {
-                download_step.set_prefix("[✖]");
-                download_step.finish_with_message("Download packages (failed)");
-                return Err(err);
-            }
-        };
+    let downloaded_count = run_step(
+        &download_step,
+        "Download packages",
+        None,
+        conda::download_and_index_packages(&solved_records, &channel_dir, &download_step),
+        |count| format!("Download packages ({count}/{count})"),
+    )
+    .await?;
 
     let lock_file = conda::build_lockfile(environment_name, &channel_urls, &solved_records)?;
     lock_file
@@ -150,31 +121,24 @@ pub async fn execute(cli: Cli) -> Result<()> {
     let installer_platforms =
         installer::resolve_installer_platforms(installer_platform, &target_platforms)?;
 
-    installer_step.set_prefix("[…]");
-    installer_step.enable_steady_tick(Duration::from_millis(120));
-    let written_paths = match installer::create_installers(
-        &script_path,
-        environment_name,
-        &channel_dir,
-        &installer_platforms,
-        &bundle_metadata,
+    let total_installers = installer_platforms.len();
+    let written_paths = run_step(
         &installer_step,
-    ) {
-        Ok(paths) => {
-            installer_step.set_prefix("[✔]");
-            installer_step.finish_with_message(format!(
-                "Create installers ({}/{})",
-                paths.len(),
-                installer_platforms.len()
-            ));
-            paths
-        }
-        Err(err) => {
-            installer_step.set_prefix("[✖]");
-            installer_step.finish_with_message("Create installers (failed)");
-            return Err(err);
-        }
-    };
+        "Create installers",
+        Some(Duration::from_millis(120)),
+        async {
+            installer::create_installers(
+                &script_path,
+                environment_name,
+                &channel_dir,
+                &installer_platforms,
+                &bundle_metadata,
+                &installer_step,
+            )
+        },
+        move |paths| format!("Create installers ({}/{total_installers})", paths.len()),
+    )
+    .await?;
 
     if downloaded_count == 0 {
         let _ = multi.println("No packages required downloading.");
@@ -195,4 +159,44 @@ fn canonicalize_manifest(manifest: PathBuf) -> Result<PathBuf> {
     manifest
         .canonicalize()
         .with_context(|| format!("failed to resolve manifest path {display}"))
+}
+
+fn progress_step(multi: &MultiProgress, style: &ProgressStyle, label: &str) -> ProgressBar {
+    let step = multi.add(ProgressBar::new_spinner());
+    step.set_style(style.clone());
+    step.set_prefix("[ ]");
+    step.set_message(label.to_string());
+    step.tick();
+    step
+}
+
+async fn run_step<F, T, S>(
+    step: &ProgressBar,
+    label: &str,
+    steady_tick: Option<Duration>,
+    future: F,
+    success_message: S,
+) -> Result<T>
+where
+    F: Future<Output = Result<T>>,
+    S: FnOnce(&T) -> String,
+{
+    step.set_prefix("[…]");
+    if let Some(interval) = steady_tick {
+        step.enable_steady_tick(interval);
+    }
+
+    match future.await {
+        Ok(value) => {
+            step.set_prefix("[✔]");
+            let message = success_message(&value);
+            step.finish_with_message(message);
+            Ok(value)
+        }
+        Err(err) => {
+            step.set_prefix("[✖]");
+            step.finish_with_message(format!("{label} (failed)"));
+            Err(err)
+        }
+    }
 }
