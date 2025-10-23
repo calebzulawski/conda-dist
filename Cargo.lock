@@ -1055,6 +1055,7 @@ dependencies = [
  "rattler",
  "rattler_conda_types",
  "rattler_lock",
+ "tempfile",
  "tokio",
  "url",
 ]

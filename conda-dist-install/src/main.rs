@@ -75,7 +75,11 @@ async fn execute(cli: Cli, project_name: &str) -> Result<()> {
     }
 
     let record_count = records.len();
-    let installer = Installer::new().with_target_platform(target_platform);
+    let cache_dir = tempfile::tempdir().context("failed to prepare temporary cache directory")?;
+    let package_cache = rattler::package_cache::PackageCache::new(cache_dir.path());
+    let installer = Installer::new()
+        .with_target_platform(target_platform)
+        .with_package_cache(package_cache);
     let result = installer
         .install(&cli.prefix, records)
         .await
@@ -96,6 +100,11 @@ async fn execute(cli: Cli, project_name: &str) -> Result<()> {
         count = record_count,
         platform = target_platform.as_str()
     );
+
+    // Ensure the ephemeral cache directory is cleaned up after installation.
+    cache_dir
+        .close()
+        .context("failed to clean up temporary cache directory")?;
 
     Ok(())
 }
