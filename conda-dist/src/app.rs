@@ -10,18 +10,20 @@ use tempfile::TempDir;
 use crate::{
     cli::{Cli, Command, InstallerArgs},
     conda::{self, DEFAULT_CHANNEL, LOCKFILE_NAME},
-    config, container, installer,
+    config, container, downloader, installer,
     progress::Progress,
+    workspace::Workspace,
 };
 
 pub async fn execute(cli: Cli) -> Result<()> {
-    match cli.command {
-        Command::Installer(args) => execute_installer(args).await,
-        Command::Container(args) => container::execute(args).await,
+    let Cli { work_dir, command } = cli;
+    match command {
+        Command::Installer(args) => execute_installer(args, work_dir.clone()).await,
+        Command::Container(args) => container::execute(args, work_dir).await,
     }
 }
 
-async fn execute_installer(args: InstallerArgs) -> Result<()> {
+async fn execute_installer(args: InstallerArgs, work_dir: Option<PathBuf>) -> Result<()> {
     let InstallerArgs {
         manifest,
         output,
@@ -30,6 +32,7 @@ async fn execute_installer(args: InstallerArgs) -> Result<()> {
 
     let manifest_ctx = load_manifest_context(manifest)?;
     let environment_name = manifest_ctx.config.name();
+    let workspace = Workspace::from_manifest_dir(&manifest_ctx.manifest_dir, work_dir)?;
 
     let default_script_path = manifest_ctx
         .manifest_dir
@@ -45,8 +48,13 @@ async fn execute_installer(args: InstallerArgs) -> Result<()> {
     let progress = Progress::stdout();
     let mut final_messages = Vec::new();
 
-    let (prep, downloaded_count) =
-        prepare_environment(&manifest_ctx, target_platforms.clone(), &progress).await?;
+    let (prep, download_summary) = prepare_environment(
+        &manifest_ctx,
+        &workspace,
+        target_platforms.clone(),
+        &progress,
+    )
+    .await?;
 
     let installer_platforms =
         installer::resolve_installer_platforms(installer_platform, &prep.target_platforms)?;
@@ -74,8 +82,23 @@ async fn execute_installer(args: InstallerArgs) -> Result<()> {
         )
         .await?;
 
-    if downloaded_count == 0 {
+    if download_summary.fetched_packages == 0 {
         final_messages.push("No packages required downloading.".to_string());
+    } else {
+        let reused = download_summary
+            .total_packages
+            .saturating_sub(download_summary.fetched_packages);
+        if reused > 0 {
+            final_messages.push(format!(
+                "Downloaded {} packages (reused {}).",
+                download_summary.fetched_packages, reused
+            ));
+        } else {
+            final_messages.push(format!(
+                "Downloaded {} packages.",
+                download_summary.fetched_packages
+            ));
+        }
     }
 
     if !written_paths.is_empty() {
@@ -132,9 +155,10 @@ pub(crate) fn load_manifest_context(manifest: PathBuf) -> Result<ManifestContext
 
 pub(crate) async fn prepare_environment(
     manifest_ctx: &ManifestContext,
+    workspace: &Workspace,
     target_platforms: Vec<Platform>,
     progress: &Progress,
-) -> Result<(EnvironmentPreparation, usize)> {
+) -> Result<(EnvironmentPreparation, downloader::DownloadSummary)> {
     let environment_name = manifest_ctx.config.name().to_string();
 
     let staging_dir = tempfile::tempdir().context("failed to create staging directory")?;
@@ -192,13 +216,25 @@ pub(crate) async fn prepare_environment(
         &solved_records,
     )?;
 
+    let package_cache_dir = workspace.package_cache_dir();
+
     let download_step = progress.step("Download packages");
     let download_bar = download_step.clone_bar();
-    let downloaded_count = download_step
+    let download_summary = download_step
         .run(
             None,
-            conda::download_and_index_packages(&solved_records, &channel_dir, &download_bar),
-            |count| format!("Download packages ({count}/{count})"),
+            downloader::download_and_stage_packages(
+                &solved_records,
+                &channel_dir,
+                &package_cache_dir,
+                &download_bar,
+            ),
+            |summary| {
+                format!(
+                    "Download packages ({}/{})",
+                    summary.total_packages, summary.total_packages
+                )
+            },
         )
         .await?;
 
@@ -216,5 +252,5 @@ pub(crate) async fn prepare_environment(
         target_platforms,
     };
 
-    Ok((preparation, downloaded_count))
+    Ok((preparation, download_summary))
 }

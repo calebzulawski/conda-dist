@@ -7,6 +7,10 @@ use crate::installer::InstallerPlatformSelection;
 #[derive(Debug, Parser)]
 #[command(version, about = "Solve conda dependencies and produce artifacts", long_about = None)]
 pub struct Cli {
+    /// Workspace directory used for cached artifacts (defaults to <manifest>/.conda-dist)
+    #[arg(long = "work-dir", value_name = "PATH")]
+    pub work_dir: Option<PathBuf>,
+
     #[command(subcommand)]
     pub command: Command,
 }

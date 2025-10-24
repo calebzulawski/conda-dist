@@ -16,11 +16,12 @@ use crate::{
     config::ContainerConfig,
     installer,
     progress::Progress,
+    workspace::Workspace,
 };
 
 const INSTALLER_FILENAME: &str = "installer.sh";
 
-pub async fn execute(args: ContainerArgs) -> Result<()> {
+pub async fn execute(args: ContainerArgs, work_dir: Option<PathBuf>) -> Result<()> {
     let ContainerArgs {
         manifest,
         platform,
@@ -32,6 +33,7 @@ pub async fn execute(args: ContainerArgs) -> Result<()> {
 
     let manifest_ctx = load_manifest_context(manifest)?;
     let container_cfg = manifest_ctx.config.container().cloned().unwrap_or_default();
+    let workspace = Workspace::from_manifest_dir(&manifest_ctx.manifest_dir, work_dir)?;
 
     let target_platform = resolve_target_platform(&manifest_ctx, platform.as_deref())?;
     ensure_linux_platform(target_platform)?;
@@ -42,7 +44,8 @@ pub async fn execute(args: ContainerArgs) -> Result<()> {
     let progress = Progress::stdout();
     let mut final_messages = Vec::new();
 
-    let (prep, _) = prepare_environment(&manifest_ctx, vec![target_platform], &progress).await?;
+    let (prep, _) =
+        prepare_environment(&manifest_ctx, &workspace, vec![target_platform], &progress).await?;
 
     let installer_step = progress.step("Prepare installer bundle");
     let installer_bar = installer_step.clone_bar();
@@ -69,7 +72,7 @@ pub async fn execute(args: ContainerArgs) -> Result<()> {
         );
     }
 
-    let context_dir = prepare_build_directory(&manifest_ctx.manifest_dir, &prep.environment_name)?;
+    let context_dir = prepare_build_directory(&workspace, &prep.environment_name)?;
     let build_context = create_build_context(
         &context_dir,
         &installer_path,
@@ -246,8 +249,8 @@ fn prepare_self_extracting_installer(
         .ok_or_else(|| anyhow!("installer creation produced no outputs"))
 }
 
-fn prepare_build_directory(manifest_dir: &Path, environment_name: &str) -> Result<PathBuf> {
-    let base_dir = manifest_dir.join(".conda-dist").join("container");
+fn prepare_build_directory(workspace: &Workspace, environment_name: &str) -> Result<PathBuf> {
+    let base_dir = workspace.container_root();
     fs::create_dir_all(&base_dir).with_context(|| {
         format!(
             "failed to create container build root at {}",
