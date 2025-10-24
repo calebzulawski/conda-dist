@@ -2,6 +2,7 @@ mod app;
 mod cli;
 mod conda;
 mod config;
+mod container;
 mod installer;
 
 use anyhow::Result;

@@ -1,3 +1,4 @@
 target/
 examples/bash-*.sh
 conda-dist/installers
+.conda-dist

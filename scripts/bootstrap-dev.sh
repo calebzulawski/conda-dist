@@ -21,14 +21,43 @@ platform_from_triple() {
 host_triple="$(rustc -vV | awk '/^host: / { print $2 }')"
 conda_platform="$(platform_from_triple "${host_triple}")"
 
+build_cmd=()
+artifact=""
+
+case "${host_triple}" in
+    x86_64-unknown-linux-gnu)
+        build_cmd=(cross build --manifest-path "${repo_root}/Cargo.toml" -p conda-dist-install --release --target x86_64-unknown-linux-musl)
+        artifact="${repo_root}/target/x86_64-unknown-linux-musl/release/conda-dist-install"
+        ;;
+    aarch64-unknown-linux-gnu)
+        build_cmd=(cross build --manifest-path "${repo_root}/Cargo.toml" -p conda-dist-install --release --target aarch64-unknown-linux-musl)
+        artifact="${repo_root}/target/aarch64-unknown-linux-musl/release/conda-dist-install"
+        ;;
+    x86_64-unknown-linux-musl)
+        build_cmd=(cargo build --manifest-path "${repo_root}/Cargo.toml" -p conda-dist-install --release --target x86_64-unknown-linux-musl)
+        artifact="${repo_root}/target/x86_64-unknown-linux-musl/release/conda-dist-install"
+        ;;
+    aarch64-unknown-linux-musl)
+        build_cmd=(cargo build --manifest-path "${repo_root}/Cargo.toml" -p conda-dist-install --release --target aarch64-unknown-linux-musl)
+        artifact="${repo_root}/target/aarch64-unknown-linux-musl/release/conda-dist-install"
+        ;;
+    *)
+        build_cmd=(cargo build --manifest-path "${repo_root}/Cargo.toml" -p conda-dist-install --release)
+        artifact="${repo_root}/target/release/conda-dist-install"
+        ;;
+esac
+
 echo "Building conda-dist-install for host (${host_triple}) -> ${conda_platform}"
-cargo build --manifest-path "${repo_root}/Cargo.toml" -p conda-dist-install --release
+"${build_cmd[@]}"
+
+if [[ ! -f "${artifact}" ]]; then
+    echo "Expected artifact not found: ${artifact}" >&2
+    exit 1
+fi
 
 installers_dir="${repo_root}/conda-dist/installers"
 mkdir -p "${installers_dir}"
 
-source_path="${repo_root}/target/release/conda-dist-install"
 target_path="${installers_dir}/${conda_platform}"
-
-cp "${source_path}" "${target_path}"
-echo "Copied ${source_path} -> ${target_path}"
+cp "${artifact}" "${target_path}"
+echo "Copied ${artifact} -> ${target_path}"

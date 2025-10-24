@@ -26,3 +26,5 @@ base64 = "0.22.1"
 flate2 = "1.0.35"
 tar = "0.4.43"
 indicatif = "0.17.9"
+oci-client = { version = "0.15", default-features = false, features = ["rustls-tls"] }
+oci-spec = "0.8.3"

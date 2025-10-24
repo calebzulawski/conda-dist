@@ -14,6 +14,8 @@ pub struct CondaDistConfig {
     dependencies: DependencySpec,
     #[serde(default)]
     metadata: Option<BundleMetadataConfig>,
+    #[serde(default)]
+    container: Option<ContainerConfig>,
 }
 
 impl CondaDistConfig {
@@ -35,6 +37,10 @@ impl CondaDistConfig {
 
     pub fn metadata(&self) -> Option<&BundleMetadataConfig> {
         self.metadata.as_ref()
+    }
+
+    pub fn container(&self) -> Option<&ContainerConfig> {
+        self.container.as_ref()
     }
 }
 
@@ -96,4 +102,32 @@ pub struct BundleMetadataConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct FeaturedPackageConfig {
     pub name: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ContainerConfig {
+    #[serde(default = "default_base_image")]
+    pub base_image: String,
+    #[serde(default = "default_builder_image")]
+    pub builder_image: String,
+    #[serde(default)]
+    pub prefix: Option<String>,
+}
+
+impl Default for ContainerConfig {
+    fn default() -> Self {
+        Self {
+            base_image: default_base_image(),
+            builder_image: default_builder_image(),
+            prefix: None,
+        }
+    }
+}
+
+fn default_base_image() -> String {
+    "gcr.io/distroless/base-debian12".to_string()
+}
+
+fn default_builder_image() -> String {
+    "docker.io/library/debian:bookworm-slim".to_string()
 }

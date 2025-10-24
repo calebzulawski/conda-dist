@@ -27,6 +27,7 @@ RATTLER_CACHE_DIR="${E2E_CACHE_DIR}" \
     cargo run \
     --manifest-path "${REPO_ROOT}/conda-dist/Cargo.toml" \
     --bin conda-dist -- \
+    installer \
     "${REPO_ROOT}/examples/bash.toml" \
     --output "${E2E_OUTPUT_DIR}"
 
