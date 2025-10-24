@@ -4,6 +4,7 @@ mod conda;
 mod config;
 mod container;
 mod installer;
+mod progress;
 
 use anyhow::Result;
 

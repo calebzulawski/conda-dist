@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
+use indicatif::ProgressBar;
 use rattler_conda_types::Platform;
 use tokio::process::Command;
 
@@ -15,6 +15,7 @@ use crate::{
     cli::ContainerArgs,
     config::ContainerConfig,
     installer,
+    progress::Progress,
 };
 
 const INSTALLER_FILENAME: &str = "installer.sh";
@@ -38,15 +39,24 @@ pub async fn execute(args: ContainerArgs) -> Result<()> {
     let runtime = select_runtime(docker, podman)?;
     validate_output_options(&runtime, oci_dir.as_ref(), oci_archive.as_ref())?;
 
-    let multi = MultiProgress::with_draw_target(ProgressDrawTarget::stdout());
-    let step_style = ProgressStyle::with_template("{prefix} {msg}")
-        .unwrap_or_else(|_| ProgressStyle::default_spinner());
+    let progress = Progress::stdout();
+    let mut final_messages = Vec::new();
 
-    let (prep, _) =
-        prepare_environment(&manifest_ctx, vec![target_platform], &multi, &step_style).await?;
+    let (prep, _) = prepare_environment(&manifest_ctx, vec![target_platform], &progress).await?;
 
+    let installer_step = progress.step("Prepare installer bundle");
+    let installer_bar = installer_step.clone_bar();
+    let prep_ref = &prep;
     let installer_path =
-        prepare_self_extracting_installer(&multi, &step_style, &prep, target_platform).await?;
+        installer_step
+            .run(
+                Some(Duration::from_millis(120)),
+                async move {
+                    prepare_self_extracting_installer(&installer_bar, prep_ref, target_platform)
+                },
+                |_| "Prepare installer bundle (1/1)".to_string(),
+            )
+            .await?;
 
     let install_prefix = container_cfg
         .prefix
@@ -68,27 +78,63 @@ pub async fn execute(args: ContainerArgs) -> Result<()> {
         &prep.environment_name,
     )?;
 
-    build_image(&runtime, &build_context, target_platform).await?;
+    let build_step = progress.step("Build container image");
+    let runtime_ref = &runtime;
+    let build_context_ref = &build_context;
+    build_step
+        .run(
+            Some(Duration::from_millis(120)),
+            async move { build_image(runtime_ref, build_context_ref, target_platform).await },
+            |_| "Build container image (1/1)".to_string(),
+        )
+        .await?;
 
-    export_optional_artifacts(
-        &runtime,
-        oci_dir.as_ref(),
-        oci_archive.as_ref(),
-        &runtime.tag,
-    )
-    .await?;
+    if runtime.kind == RuntimeKind::Podman && (oci_dir.is_some() || oci_archive.is_some()) {
+        let step = progress.step("Export OCI artifacts");
+        let export_runtime = &runtime;
+        let oci_dir_ref = oci_dir.as_ref();
+        let oci_archive_ref = oci_archive.as_ref();
+        step.run(
+            Some(Duration::from_millis(120)),
+            async move {
+                export_optional_artifacts(
+                    export_runtime,
+                    oci_dir_ref,
+                    oci_archive_ref,
+                    &export_runtime.tag,
+                )
+                .await
+            },
+            |_| "Export OCI artifacts (1/1)".to_string(),
+        )
+        .await?;
+    } else {
+        export_optional_artifacts(
+            &runtime,
+            oci_dir.as_ref(),
+            oci_archive.as_ref(),
+            &runtime.tag,
+        )
+        .await?;
+    }
 
-    println!(
+    final_messages.push(format!(
         "Container image '{}' is available via {}.",
         runtime.tag,
         runtime.binary()
-    );
+    ));
 
     if let Some(dir) = &oci_dir {
-        println!("  - Exported OCI directory: {}", dir.display());
+        final_messages.push(format!("  - Exported OCI directory: {}", dir.display()));
     }
     if let Some(archive) = &oci_archive {
-        println!("  - Exported OCI archive: {}", archive.display());
+        final_messages.push(format!("  - Exported OCI archive: {}", archive.display()));
+    }
+
+    drop(progress);
+
+    for message in final_messages {
+        println!("{}", message);
     }
 
     Ok(())
@@ -172,9 +218,8 @@ fn validate_output_options(
     Ok(())
 }
 
-async fn prepare_self_extracting_installer(
-    multi: &MultiProgress,
-    step_style: &ProgressStyle,
+fn prepare_self_extracting_installer(
+    progress: &ProgressBar,
     prep: &EnvironmentPreparation,
     platform: Platform,
 ) -> Result<PathBuf> {
@@ -186,36 +231,19 @@ async fn prepare_self_extracting_installer(
         )
     })?;
 
-    let progress = multi.add(ProgressBar::new_spinner());
-    progress.set_style(step_style.clone());
-    progress.set_prefix("[…]");
-    progress.set_message("Prepare installer bundle");
-    progress.enable_steady_tick(Duration::from_millis(120));
-
     let result = installer::create_installers(
         &installer_dir,
         &prep.environment_name,
         &prep.channel_dir,
         &[platform],
         &prep.bundle_metadata,
-        &progress,
+        progress,
     );
-
-    match result {
-        Ok(paths) => {
-            progress.set_prefix("[✔]");
-            progress.finish_with_message("Prepare installer bundle (1/1)");
-            paths
-                .into_iter()
-                .next()
-                .ok_or_else(|| anyhow!("installer creation produced no outputs"))
-        }
-        Err(err) => {
-            progress.set_prefix("[✖]");
-            progress.finish_with_message("Prepare installer bundle (failed)");
-            Err(err)
-        }
-    }
+    let paths = result?;
+    paths
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow!("installer creation produced no outputs"))
 }
 
 fn prepare_build_directory(manifest_dir: &Path, environment_name: &str) -> Result<PathBuf> {

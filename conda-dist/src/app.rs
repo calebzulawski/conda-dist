@@ -1,11 +1,9 @@
 use std::{
-    future::Future,
     path::{Path, PathBuf},
     time::Duration,
 };
 
 use anyhow::{Context, Result, bail};
-use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use rattler_conda_types::{ChannelConfig, Platform};
 use tempfile::TempDir;
 
@@ -13,6 +11,7 @@ use crate::{
     cli::{Cli, Command, InstallerArgs},
     conda::{self, DEFAULT_CHANNEL, LOCKFILE_NAME},
     config, container, installer,
+    progress::Progress,
 };
 
 pub async fn execute(cli: Cli) -> Result<()> {
@@ -43,45 +42,53 @@ async fn execute_installer(args: InstallerArgs) -> Result<()> {
         bail!("no target platforms specified");
     }
 
-    let multi = MultiProgress::with_draw_target(ProgressDrawTarget::stdout());
-    let step_style = ProgressStyle::with_template("{prefix} {msg}")
-        .unwrap_or_else(|_| ProgressStyle::default_spinner());
+    let progress = Progress::stdout();
+    let mut final_messages = Vec::new();
 
     let (prep, downloaded_count) =
-        prepare_environment(&manifest_ctx, target_platforms.clone(), &multi, &step_style).await?;
+        prepare_environment(&manifest_ctx, target_platforms.clone(), &progress).await?;
 
-    let installer_step = progress_step(&multi, &step_style, "Create installers");
     let installer_platforms =
         installer::resolve_installer_platforms(installer_platform, &prep.target_platforms)?;
 
     let total_installers = installer_platforms.len();
-    let written_paths = run_step(
-        &installer_step,
-        "Create installers",
-        Some(Duration::from_millis(120)),
-        async {
-            installer::create_installers(
-                &script_path,
-                &prep.environment_name,
-                &prep.channel_dir,
-                &installer_platforms,
-                &prep.bundle_metadata,
-                &installer_step,
-            )
-        },
-        move |paths| format!("Create installers ({}/{total_installers})", paths.len()),
-    )
-    .await?;
+    let installer_step = progress.step("Create installers");
+    let installer_bar = installer_step.clone_bar();
+    let script_path_ref = &script_path;
+    let prep_ref = &prep;
+    let installer_platforms_ref = &installer_platforms;
+    let written_paths = installer_step
+        .run(
+            Some(Duration::from_millis(120)),
+            async move {
+                installer::create_installers(
+                    script_path_ref,
+                    &prep_ref.environment_name,
+                    &prep_ref.channel_dir,
+                    installer_platforms_ref,
+                    &prep_ref.bundle_metadata,
+                    &installer_bar,
+                )
+            },
+            move |paths| format!("Create installers ({}/{total_installers})", paths.len()),
+        )
+        .await?;
 
     if downloaded_count == 0 {
-        let _ = multi.println("No packages required downloading.");
+        final_messages.push("No packages required downloading.".to_string());
     }
 
     if !written_paths.is_empty() {
-        let _ = multi.println("Installer outputs:");
+        final_messages.push("Installer outputs:".to_string());
         for path in written_paths {
-            let _ = multi.println(format!("  - {}", path.display()));
+            final_messages.push(format!("  - {}", path.display()));
         }
+    }
+
+    drop(progress);
+
+    for message in final_messages {
+        println!("{}", message);
     }
 
     Ok(())
@@ -126,8 +133,7 @@ pub(crate) fn load_manifest_context(manifest: PathBuf) -> Result<ManifestContext
 pub(crate) async fn prepare_environment(
     manifest_ctx: &ManifestContext,
     target_platforms: Vec<Platform>,
-    multi: &MultiProgress,
-    step_style: &ProgressStyle,
+    progress: &Progress,
 ) -> Result<(EnvironmentPreparation, usize)> {
     let environment_name = manifest_ctx.config.name().to_string();
 
@@ -163,24 +169,21 @@ pub(crate) async fn prepare_environment(
         .chain(channels.iter().map(|ch| ch.base_url.to_string()))
         .collect();
 
-    let solve_step = progress_step(multi, step_style, "Solve environment");
-    let download_step = progress_step(multi, step_style, "Download packages");
-
+    let solve_step = progress.step("Solve environment");
     let solve_platforms = conda::augment_with_noarch(&target_platforms);
-    let solved_records = run_step(
-        &solve_step,
-        "Solve environment",
-        Some(Duration::from_millis(120)),
-        conda::solve_environment(
-            &gateway,
-            &channels,
-            &specs,
-            &solve_platforms,
-            virtual_packages,
-        ),
-        |_| "Solve environment".to_string(),
-    )
-    .await?;
+    let solved_records = solve_step
+        .run(
+            Some(Duration::from_millis(120)),
+            conda::solve_environment(
+                &gateway,
+                &channels,
+                &specs,
+                &solve_platforms,
+                virtual_packages,
+            ),
+            |_| "Solve environment".to_string(),
+        )
+        .await?;
 
     let bundle_metadata = installer::PreparedBundleMetadata::from_config(
         &environment_name,
@@ -189,14 +192,15 @@ pub(crate) async fn prepare_environment(
         &solved_records,
     )?;
 
-    let downloaded_count = run_step(
-        &download_step,
-        "Download packages",
-        None,
-        conda::download_and_index_packages(&solved_records, &channel_dir, &download_step),
-        |count| format!("Download packages ({count}/{count})"),
-    )
-    .await?;
+    let download_step = progress.step("Download packages");
+    let download_bar = download_step.clone_bar();
+    let downloaded_count = download_step
+        .run(
+            None,
+            conda::download_and_index_packages(&solved_records, &channel_dir, &download_bar),
+            |count| format!("Download packages ({count}/{count})"),
+        )
+        .await?;
 
     let lockfile_path = channel_dir.join(LOCKFILE_NAME);
     let lock_file = conda::build_lockfile(&environment_name, &channel_urls, &solved_records)?;
@@ -213,44 +217,4 @@ pub(crate) async fn prepare_environment(
     };
 
     Ok((preparation, downloaded_count))
-}
-
-fn progress_step(multi: &MultiProgress, style: &ProgressStyle, label: &str) -> ProgressBar {
-    let step = multi.add(ProgressBar::new_spinner());
-    step.set_style(style.clone());
-    step.set_prefix("[ ]");
-    step.set_message(label.to_string());
-    step.tick();
-    step
-}
-
-async fn run_step<F, T, S>(
-    step: &ProgressBar,
-    label: &str,
-    steady_tick: Option<Duration>,
-    future: F,
-    success_message: S,
-) -> Result<T>
-where
-    F: Future<Output = Result<T>>,
-    S: FnOnce(&T) -> String,
-{
-    step.set_prefix("[…]");
-    if let Some(interval) = steady_tick {
-        step.enable_steady_tick(interval);
-    }
-
-    match future.await {
-        Ok(value) => {
-            step.set_prefix("[✔]");
-            let message = success_message(&value);
-            step.finish_with_message(message);
-            Ok(value)
-        }
-        Err(err) => {
-            step.set_prefix("[✖]");
-            step.finish_with_message(format!("{label} (failed)"));
-            Err(err)
-        }
-    }
 }
