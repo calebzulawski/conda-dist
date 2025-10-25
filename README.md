@@ -16,6 +16,7 @@ To package bash, create bash.toml:
 
 ```toml
 name = "bash"
+version = "1.0.0"
 channels = ["conda-forge"]
 platforms = ["linux-64"]
 
@@ -23,17 +24,33 @@ platforms = ["linux-64"]
 bash = "*"
 ```
 
-Then run:
+### Installer
+
+To create a portable installer, run:
 
 ```bash
 conda-dist installer bash.toml
 ```
 
-This generates an installer you can run anywhere:
+To install the bash application:
 
 ```bash
 bash-linux-64.sh <install dir>
 <install dir>/bin/bash --version
+```
+
+### Docker Image
+
+To create a docker image, run:
+
+```bash
+conda-dist container bash.toml
+```
+
+The generated image contains just the bash application:
+
+```bash
+docker run bash:1.0.0 bash -c "echo hello"
 ```
 
 ## License

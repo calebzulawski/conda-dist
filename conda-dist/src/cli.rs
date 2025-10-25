@@ -52,21 +52,9 @@ pub struct ContainerArgs {
     #[arg(long = "platform", value_name = "PLATFORM")]
     pub platform: Option<String>,
 
-    /// Export the resulting image as an OCI layout directory
-    #[arg(long = "oci-dir", value_name = "PATH")]
-    pub oci_dir: Option<PathBuf>,
-
-    /// Export the resulting image as an OCI archive (tar)
-    #[arg(long = "oci-archive", value_name = "PATH")]
-    pub oci_archive: Option<PathBuf>,
-
-    /// Load the resulting image into Docker with the provided tag
-    #[arg(long = "docker", value_name = "TAG")]
-    pub docker: Option<String>,
-
-    /// Load the resulting image into Podman with the provided tag
-    #[arg(long = "podman", value_name = "TAG")]
-    pub podman: Option<String>,
+    /// Path to the container engine binary (defaults to docker, then podman)
+    #[arg(long = "engine", value_name = "PATH")]
+    pub engine: Option<PathBuf>,
 }
 
 pub fn parse() -> Cli {

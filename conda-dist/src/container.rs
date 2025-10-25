@@ -1,5 +1,5 @@
 use std::{
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     str::FromStr,
     time::Duration,
@@ -25,10 +25,7 @@ pub async fn execute(args: ContainerArgs, work_dir: Option<PathBuf>) -> Result<(
     let ContainerArgs {
         manifest,
         platform,
-        oci_dir,
-        oci_archive,
-        docker,
-        podman,
+        engine,
     } = args;
 
     let manifest_ctx = load_manifest_context(manifest)?;
@@ -38,8 +35,9 @@ pub async fn execute(args: ContainerArgs, work_dir: Option<PathBuf>) -> Result<(
     let target_platform = resolve_target_platform(&manifest_ctx, platform.as_deref())?;
     ensure_linux_platform(target_platform)?;
 
-    let runtime = select_runtime(docker, podman)?;
-    validate_output_options(&runtime, oci_dir.as_ref(), oci_archive.as_ref())?;
+    let engine_path = resolve_runtime(engine)?;
+    let image_tag = derive_image_tag(&manifest_ctx, &container_cfg)?;
+    let runtime = RuntimeConfig::new(engine_path, image_tag);
 
     let progress = Progress::stdout();
     let mut final_messages = Vec::new();
@@ -92,47 +90,11 @@ pub async fn execute(args: ContainerArgs, work_dir: Option<PathBuf>) -> Result<(
         )
         .await?;
 
-    if runtime.kind == RuntimeKind::Podman && (oci_dir.is_some() || oci_archive.is_some()) {
-        let step = progress.step("Export OCI artifacts");
-        let export_runtime = &runtime;
-        let oci_dir_ref = oci_dir.as_ref();
-        let oci_archive_ref = oci_archive.as_ref();
-        step.run(
-            Some(Duration::from_millis(120)),
-            async move {
-                export_optional_artifacts(
-                    export_runtime,
-                    oci_dir_ref,
-                    oci_archive_ref,
-                    &export_runtime.tag,
-                )
-                .await
-            },
-            |_| "Export OCI artifacts (1/1)".to_string(),
-        )
-        .await?;
-    } else {
-        export_optional_artifacts(
-            &runtime,
-            oci_dir.as_ref(),
-            oci_archive.as_ref(),
-            &runtime.tag,
-        )
-        .await?;
-    }
-
     final_messages.push(format!(
         "Container image '{}' is available via {}.",
         runtime.tag,
-        runtime.binary()
+        runtime.binary().display()
     ));
-
-    if let Some(dir) = &oci_dir {
-        final_messages.push(format!("  - Exported OCI directory: {}", dir.display()));
-    }
-    if let Some(archive) = &oci_archive {
-        final_messages.push(format!("  - Exported OCI archive: {}", archive.display()));
-    }
 
     drop(progress);
 
@@ -172,53 +134,94 @@ fn ensure_linux_platform(platform: Platform) -> Result<()> {
 
 #[derive(Debug, Clone)]
 struct RuntimeConfig {
-    kind: RuntimeKind,
+    binary: PathBuf,
     tag: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RuntimeKind {
-    Docker,
-    Podman,
-}
-
 impl RuntimeConfig {
-    fn binary(&self) -> &str {
-        match self.kind {
-            RuntimeKind::Docker => "docker",
-            RuntimeKind::Podman => "podman",
-        }
+    fn new(binary: PathBuf, tag: String) -> Self {
+        Self { binary, tag }
+    }
+
+    fn binary(&self) -> &Path {
+        &self.binary
     }
 }
 
-fn select_runtime(docker_tag: Option<String>, podman_tag: Option<String>) -> Result<RuntimeConfig> {
-    match (docker_tag, podman_tag) {
-        (Some(docker_tag), None) => Ok(RuntimeConfig {
-            kind: RuntimeKind::Docker,
-            tag: docker_tag,
-        }),
-        (None, Some(podman_tag)) => Ok(RuntimeConfig {
-            kind: RuntimeKind::Podman,
-            tag: podman_tag,
-        }),
-        (Some(_), Some(_)) => bail!("please specify either --docker or --podman, not both"),
-        (None, None) => bail!("container builds require either --docker <tag> or --podman <tag>"),
-    }
-}
-
-fn validate_output_options(
-    runtime: &RuntimeConfig,
-    oci_dir: Option<&PathBuf>,
-    oci_archive: Option<&PathBuf>,
-) -> Result<()> {
-    if runtime.kind == RuntimeKind::Docker {
-        if oci_dir.is_some() || oci_archive.is_some() {
+fn resolve_runtime(engine: Option<PathBuf>) -> Result<PathBuf> {
+    if let Some(explicit) = engine {
+        if !is_supported_engine(&explicit) {
             bail!(
-                "OCI outputs (--oci-dir/--oci-archive) require --podman because docker does not support exporting OCI layouts"
+                "unable to determine engine type for {} (expected docker or podman binary)",
+                explicit.display()
             );
         }
+        return Ok(explicit);
     }
-    Ok(())
+
+    if let Some(path) = find_in_path("docker") {
+        return Ok(path);
+    }
+
+    if let Some(path) = find_in_path("podman") {
+        return Ok(path);
+    }
+
+    bail!("no container engine found; install docker or podman, or supply --engine <path>");
+}
+
+fn is_supported_engine(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+        return false;
+    };
+    let lowercase = name.to_lowercase();
+    lowercase.contains("docker") || lowercase.contains("podman")
+}
+
+fn find_in_path(binary: &str) -> Option<PathBuf> {
+    let path_var = env::var_os("PATH")?;
+    env::split_paths(&path_var)
+        .map(|dir| dir.join(binary))
+        .find(|candidate| candidate.is_file())
+}
+
+fn derive_image_tag(
+    manifest_ctx: &crate::app::ManifestContext,
+    container_cfg: &ContainerConfig,
+) -> Result<String> {
+    let name = manifest_ctx.config.name();
+    let version = manifest_ctx.config.version().ok_or_else(|| {
+        anyhow!("manifest is missing required field 'version' for container builds")
+    })?;
+    let version = version.trim();
+    if version.is_empty() {
+        bail!("manifest 'version' field cannot be empty for container builds");
+    }
+    if version.chars().any(|ch| ch.is_whitespace()) {
+        bail!("manifest 'version' field must not contain whitespace");
+    }
+
+    let mut segments = Vec::new();
+    if let Some(registry) = container_cfg
+        .registry
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        segments.push(registry.trim_matches('/').to_string());
+    }
+    if let Some(org) = container_cfg
+        .organization
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        segments.push(org.trim_matches('/').to_string());
+    }
+    segments.push(name.to_string());
+
+    let repository = segments.join("/");
+    Ok(format!("{repository}:{version}"))
 }
 
 fn prepare_self_extracting_installer(
@@ -374,54 +377,6 @@ async fn build_image(
         .arg(context_path);
 
     run_command(&mut cmd, "image build").await
-}
-
-async fn export_optional_artifacts(
-    runtime: &RuntimeConfig,
-    oci_dir: Option<&PathBuf>,
-    oci_archive: Option<&PathBuf>,
-    tag: &str,
-) -> Result<()> {
-    if runtime.kind == RuntimeKind::Podman {
-        if let Some(dir) = oci_dir {
-            if dir.exists() {
-                bail!(
-                    "cannot export OCI directory to '{}' because it already exists",
-                    dir.display()
-                );
-            }
-            if let Some(parent) = dir.parent() {
-                fs::create_dir_all(parent).with_context(|| {
-                    format!("failed to prepare parent directory for {}", dir.display())
-                })?;
-            }
-
-            let mut cmd = Command::new(runtime.binary());
-            cmd.args(["image", "save", "--format", "oci-dir", "-o"])
-                .arg(dir)
-                .arg(tag);
-            run_command(&mut cmd, "podman image save (oci-dir)").await?;
-        }
-
-        if let Some(archive) = oci_archive {
-            if let Some(parent) = archive.parent() {
-                fs::create_dir_all(parent).with_context(|| {
-                    format!(
-                        "failed to prepare parent directory for {}",
-                        archive.display()
-                    )
-                })?;
-            }
-
-            let mut cmd = Command::new(runtime.binary());
-            cmd.args(["image", "save", "--format", "oci-archive", "-o"])
-                .arg(archive)
-                .arg(tag);
-            run_command(&mut cmd, "podman image save (oci-archive)").await?;
-        }
-    }
-
-    Ok(())
 }
 
 fn platform_to_runtime_spec(platform: Platform) -> Result<&'static str> {

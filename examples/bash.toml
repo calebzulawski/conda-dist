@@ -1,6 +1,11 @@
 name = "bash"
+version = "1.0.0"
 channels = ["conda-forge"]
 platforms = ["linux-64"]
+
+[container]
+registry = "registry.example.com"
+organization = "example"
 
 [dependencies]
 bash = "*"

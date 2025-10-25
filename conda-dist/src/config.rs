@@ -8,6 +8,8 @@ use serde::Deserialize;
 pub struct CondaDistConfig {
     name: String,
     #[serde(default)]
+    version: Option<String>,
+    #[serde(default)]
     channels: Vec<String>,
     #[serde(default)]
     platforms: Vec<String>,
@@ -21,6 +23,10 @@ pub struct CondaDistConfig {
 impl CondaDistConfig {
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn version(&self) -> Option<&str> {
+        self.version.as_deref()
     }
 
     pub fn channels(&self) -> &[String] {
@@ -112,6 +118,10 @@ pub struct ContainerConfig {
     pub builder_image: String,
     #[serde(default)]
     pub prefix: Option<String>,
+    #[serde(default)]
+    pub registry: Option<String>,
+    #[serde(default)]
+    pub organization: Option<String>,
 }
 
 impl Default for ContainerConfig {
@@ -120,6 +130,8 @@ impl Default for ContainerConfig {
             base_image: default_base_image(),
             builder_image: default_builder_image(),
             prefix: None,
+            registry: None,
+            organization: None,
         }
     }
 }

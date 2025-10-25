@@ -1,4 +1,5 @@
 name = "bash"
+version = "1.0.0"
 channels = ["conda-forge"]
 platforms = ["linux-64"]
 
