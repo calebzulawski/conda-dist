@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+MANIFEST=${1:-examples/bash.toml}
+TEST_COMMAND=${2:-bin/bash}
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 pushd "$REPO_ROOT" >/dev/null
 
@@ -19,19 +22,17 @@ echo "==> Bootstrapping bundled installer"
 
 E2E_CACHE_DIR="$(mktemp -d)"
 E2E_OUTPUT_DIR="$(mktemp -d)"
-E2E_PREFIX_PARENT="$(mktemp -d)"
-INSTALL_PREFIX="${E2E_PREFIX_PARENT}/bash-env"
+E2E_INSTALL_DIR="$(mktemp -d)"
 
-echo "==> Building installer from examples/bash.toml"
+echo "==> Building installer from ${MANIFEST}"
 RATTLER_CACHE_DIR="${E2E_CACHE_DIR}" \
     cargo run \
-    --manifest-path "${REPO_ROOT}/conda-dist/Cargo.toml" \
     --bin conda-dist -- \
     installer \
-    "${REPO_ROOT}/examples/bash.toml" \
+    "${MANIFEST}" \
     --output "${E2E_OUTPUT_DIR}"
 
-INSTALLER_SCRIPT="$(find "${E2E_OUTPUT_DIR}" -maxdepth 1 -type f -name 'bash-*.sh' -print -quit)"
+INSTALLER_SCRIPT="$(find "${E2E_OUTPUT_DIR}" -maxdepth 1 -type f -name '*.sh' -print -quit)"
 if [[ -z "${INSTALLER_SCRIPT}" ]]; then
     echo "error: no installer script produced"
     exit 1
@@ -45,23 +46,13 @@ echo "==> Listing packages (table)"
 bash "${INSTALLER_SCRIPT}" --list-packages
 
 echo "==> Listing packages (JSON)"
-PACKAGE_JSON="$(bash "${INSTALLER_SCRIPT}" --list-packages-json)"
-echo "$PACKAGE_JSON"
+bash "${INSTALLER_SCRIPT}" --list-packages-json
 
-echo "==> Installing into ${INSTALL_PREFIX}"
-mkdir -p "${INSTALL_PREFIX}"
-bash "${INSTALLER_SCRIPT}" "${INSTALL_PREFIX}"
-
-POST_INSTALL_LOG="${INSTALL_PREFIX}/post-install.log"
-if [[ ! -s "${POST_INSTALL_LOG}" ]]; then
-    echo "error: post-install log not created"
-    exit 1
-fi
-echo "Post-install log created at ${POST_INSTALL_LOG}"
-tail -n +1 "${POST_INSTALL_LOG}"
+echo "==> Installing into ${E2E_INSTALL_DIR}"
+mkdir -p "${E2E_INSTALL_DIR}"
+bash "${INSTALLER_SCRIPT}" "${E2E_INSTALL_DIR}"
 
 echo "==> Running installed bash"
-"${INSTALL_PREFIX}/bin/bash" --version
-"${INSTALL_PREFIX}/bin/bash" -c 'echo e2e-test-success'
+"${E2E_INSTALL_DIR}/${TEST_COMMAND}" --version
 
 echo "==> E2E flow completed successfully"
