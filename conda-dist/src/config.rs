@@ -100,14 +100,9 @@ pub struct BundleMetadataConfig {
     #[serde(default)]
     pub success_message: Option<String>,
     #[serde(default)]
-    pub featured_packages: Vec<FeaturedPackageConfig>,
+    pub featured_packages: Vec<String>,
     #[serde(default)]
     pub post_install_script: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct FeaturedPackageConfig {
-    pub name: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

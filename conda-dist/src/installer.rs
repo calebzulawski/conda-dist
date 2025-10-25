@@ -87,17 +87,14 @@ impl PreparedBundleMetadata {
         let mut seen = HashSet::new();
         let mut featured = Vec::new();
         for entry in featured_packages {
-            let package_name = PackageName::from_str(&entry.name).with_context(|| {
-                format!(
-                    "featured package '{}' is not a valid package name",
-                    entry.name
-                )
+            let package_name = PackageName::from_str(&entry).with_context(|| {
+                format!("featured package '{}' is not a valid package name", entry)
             })?;
 
             if !available_names.contains(&package_name) {
                 bail!(
                     "featured package '{}' was not found in the resolved environment",
-                    entry.name
+                    entry
                 );
             }
 

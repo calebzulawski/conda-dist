@@ -22,6 +22,4 @@ release_notes = """
 """
 success_message = "Bash is ready. Launch it via <prefix>/bin/bash."
 post_install_script = "post-install.sh"
-
-[[metadata.featured_packages]]
-name = "bash"
+featured_packages = ["bash"]
