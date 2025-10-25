@@ -1,6 +1,6 @@
-use std::str::FromStr;
+use std::{path::Path, str::FromStr};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use rattler::default_cache_dir;
 use rattler_conda_types::{
     Channel, ChannelConfig, GenericVirtualPackage, MatchSpec, Platform, RepoDataRecord,
@@ -68,11 +68,37 @@ pub fn build_gateway() -> Result<Gateway> {
     Ok(builder.finish())
 }
 
+pub fn load_locked_packages(
+    path: &Path,
+    environment_name: &str,
+    platforms: &[Platform],
+) -> Result<Vec<RepoDataRecord>> {
+    let lock_file = LockFile::from_path(path)
+        .with_context(|| format!("failed to load lockfile from {}", path.display()))?;
+    let Some(environment) = lock_file.environment(environment_name) else {
+        return Ok(Vec::new());
+    };
+
+    let mut locked_packages = Vec::new();
+    for platform in platforms {
+        match environment
+            .conda_repodata_records(*platform)
+            .map_err(|err| anyhow!(err))?
+        {
+            Some(records) => locked_packages.extend(records),
+            None => continue,
+        }
+    }
+
+    Ok(locked_packages)
+}
+
 pub async fn solve_environment(
     gateway: &Gateway,
     channels: &[Channel],
     specs: &[MatchSpec],
     solve_platforms: &[Platform],
+    locked_packages: Vec<RepoDataRecord>,
     virtual_packages: Vec<GenericVirtualPackage>,
 ) -> Result<Vec<RepoDataRecord>> {
     let repo_data_sets = gateway
@@ -97,7 +123,7 @@ pub async fn solve_environment(
     let mut solver = resolvo::Solver::default();
     let solve_result = solver.solve(SolverTask {
         available_packages,
-        locked_packages: Vec::new(),
+        locked_packages,
         pinned_packages: Vec::new(),
         virtual_packages,
         specs: specs.to_vec(),

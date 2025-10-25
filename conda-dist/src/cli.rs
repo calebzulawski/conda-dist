@@ -33,6 +33,10 @@ pub struct InstallerArgs {
     #[arg(long = "output", alias = "output-dir", value_name = "PATH")]
     pub output: Option<PathBuf>,
 
+    /// Regenerate the lockfile instead of reusing any cached version
+    #[arg(long = "unlock")]
+    pub unlock: bool,
+
     /// Select which installer platform(s) to build
     #[arg(
         long = "installer-platform",
@@ -55,6 +59,10 @@ pub struct ContainerArgs {
     /// Path to the container engine binary (defaults to docker, then podman)
     #[arg(long = "engine", value_name = "PATH")]
     pub engine: Option<PathBuf>,
+
+    /// Regenerate the lockfile instead of reusing any cached version
+    #[arg(long = "unlock")]
+    pub unlock: bool,
 }
 
 pub fn parse() -> Cli {

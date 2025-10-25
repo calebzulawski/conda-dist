@@ -5,6 +5,8 @@ use std::{
 
 use anyhow::{Context, Result};
 
+use crate::conda::LOCKFILE_NAME;
+
 #[derive(Debug, Clone)]
 pub struct Workspace {
     root: PathBuf,
@@ -35,5 +37,9 @@ impl Workspace {
 
     pub fn package_cache_dir(&self) -> PathBuf {
         self.root.join("package-cache")
+    }
+
+    pub fn lockfile_path(&self) -> PathBuf {
+        self.root.join(LOCKFILE_NAME)
     }
 }

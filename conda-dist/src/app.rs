@@ -28,6 +28,7 @@ async fn execute_installer(args: InstallerArgs, work_dir: Option<PathBuf>) -> Re
         manifest,
         output,
         installer_platform,
+        unlock,
     } = args;
 
     let manifest_ctx = load_manifest_context(manifest)?;
@@ -52,6 +53,7 @@ async fn execute_installer(args: InstallerArgs, work_dir: Option<PathBuf>) -> Re
         &manifest_ctx,
         &workspace,
         target_platforms.clone(),
+        unlock,
         &progress,
     )
     .await?;
@@ -157,6 +159,7 @@ pub(crate) async fn prepare_environment(
     manifest_ctx: &ManifestContext,
     workspace: &Workspace,
     target_platforms: Vec<Platform>,
+    unlock_lockfile: bool,
     progress: &Progress,
 ) -> Result<(EnvironmentPreparation, downloader::DownloadSummary)> {
     let environment_name = manifest_ctx.config.name().to_string();
@@ -193,8 +196,19 @@ pub(crate) async fn prepare_environment(
         .chain(channels.iter().map(|ch| ch.base_url.to_string()))
         .collect();
 
-    let solve_step = progress.step("Solve environment");
     let solve_platforms = conda::augment_with_noarch(&target_platforms);
+    let workspace_lockfile_path = workspace.lockfile_path();
+    let locked_packages = if !unlock_lockfile && workspace_lockfile_path.exists() {
+        conda::load_locked_packages(
+            &workspace_lockfile_path,
+            &environment_name,
+            &solve_platforms,
+        )?
+    } else {
+        Vec::new()
+    };
+
+    let solve_step = progress.step("Solve environment");
     let solved_records = solve_step
         .run(
             Some(Duration::from_millis(120)),
@@ -203,6 +217,7 @@ pub(crate) async fn prepare_environment(
                 &channels,
                 &specs,
                 &solve_platforms,
+                locked_packages,
                 virtual_packages,
             ),
             |_| "Solve environment".to_string(),
@@ -238,8 +253,17 @@ pub(crate) async fn prepare_environment(
         )
         .await?;
 
-    let lockfile_path = channel_dir.join(LOCKFILE_NAME);
     let lock_file = conda::build_lockfile(&environment_name, &channel_urls, &solved_records)?;
+    lock_file
+        .to_path(&workspace_lockfile_path)
+        .with_context(|| {
+            format!(
+                "failed to write lockfile to workspace at {}",
+                workspace_lockfile_path.display()
+            )
+        })?;
+
+    let lockfile_path = channel_dir.join(LOCKFILE_NAME);
     lock_file
         .to_path(&lockfile_path)
         .with_context(|| format!("failed to write lockfile to {}", lockfile_path.display()))?;

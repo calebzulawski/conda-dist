@@ -26,6 +26,7 @@ pub async fn execute(args: ContainerArgs, work_dir: Option<PathBuf>) -> Result<(
         manifest,
         platform,
         engine,
+        unlock,
     } = args;
 
     let manifest_ctx = load_manifest_context(manifest)?;
@@ -42,8 +43,14 @@ pub async fn execute(args: ContainerArgs, work_dir: Option<PathBuf>) -> Result<(
     let progress = Progress::stdout();
     let mut final_messages = Vec::new();
 
-    let (prep, _) =
-        prepare_environment(&manifest_ctx, &workspace, vec![target_platform], &progress).await?;
+    let (prep, _) = prepare_environment(
+        &manifest_ctx,
+        &workspace,
+        vec![target_platform],
+        unlock,
+        &progress,
+    )
+    .await?;
 
     let installer_step = progress.step("Prepare installer bundle");
     let installer_bar = installer_step.clone_bar();
