@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, fs, path::Path};
 
 use anyhow::{Context, Result};
-use rattler_conda_types::{MatchSpec, ParseStrictness};
+use rattler_conda_types::{MatchSpec, ParseStrictness, Platform};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -18,6 +18,8 @@ pub struct CondaDistConfig {
     metadata: Option<BundleMetadataConfig>,
     #[serde(default)]
     container: Option<ContainerConfig>,
+    #[serde(default)]
+    virtual_packages: Option<VirtualPackagesConfig>,
 }
 
 impl CondaDistConfig {
@@ -47,6 +49,10 @@ impl CondaDistConfig {
 
     pub fn container(&self) -> Option<&ContainerConfig> {
         self.container.as_ref()
+    }
+
+    pub fn virtual_packages(&self) -> Option<&VirtualPackagesConfig> {
+        self.virtual_packages.as_ref()
     }
 }
 
@@ -137,4 +143,45 @@ fn default_base_image() -> String {
 
 fn default_builder_image() -> String {
     "docker.io/library/debian:bookworm-slim".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct VirtualPackagesConfig {
+    #[serde(flatten)]
+    platforms: BTreeMap<String, PlatformVirtualPackageConfig>,
+}
+
+impl VirtualPackagesConfig {
+    pub fn for_platform(&self, platform: Platform) -> Option<&PlatformVirtualPackageConfig> {
+        self.platforms
+            .get(platform.as_str())
+            .or_else(|| self.platforms.get("default"))
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PlatformVirtualPackageConfig {
+    #[serde(default)]
+    pub linux: Option<String>,
+    #[serde(default)]
+    pub osx: Option<String>,
+    #[serde(default)]
+    pub win: Option<String>,
+    #[serde(default)]
+    pub libc: Option<VirtualPackageLibcConfig>,
+    #[serde(default)]
+    pub cuda: Option<String>,
+    #[serde(default)]
+    pub archspec: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct VirtualPackageLibcConfig {
+    #[serde(default = "default_libc_family")]
+    pub family: String,
+    pub version: String,
+}
+
+fn default_libc_family() -> String {
+    "glibc".to_string()
 }
