@@ -2,7 +2,6 @@ mod app;
 mod cli;
 mod conda;
 mod config;
-mod container;
 mod downloader;
 mod installer;
 mod progress;

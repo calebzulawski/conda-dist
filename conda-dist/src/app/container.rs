@@ -11,12 +11,13 @@ use rattler_conda_types::Platform;
 use tokio::process::Command;
 
 use crate::{
-    app::{EnvironmentPreparation, load_manifest_context, prepare_environment},
-    cli::ContainerArgs,
-    config::ContainerConfig,
-    installer,
-    progress::Progress,
+    cli::ContainerArgs, config::ContainerConfig, installer, progress::Progress,
     workspace::Workspace,
+};
+
+use super::{
+    context::{ManifestContext, load_manifest_context},
+    environment::{EnvironmentPreparation, prepare_environment},
 };
 
 const INSTALLER_FILENAME: &str = "installer.sh";
@@ -113,7 +114,7 @@ pub async fn execute(args: ContainerArgs, work_dir: Option<PathBuf>) -> Result<(
 }
 
 fn resolve_target_platform(
-    manifest_ctx: &crate::app::ManifestContext,
+    manifest_ctx: &ManifestContext,
     requested: Option<&str>,
 ) -> Result<Platform> {
     if let Some(raw) = requested {
@@ -193,7 +194,7 @@ fn find_in_path(binary: &str) -> Option<PathBuf> {
 }
 
 fn derive_image_tag(
-    manifest_ctx: &crate::app::ManifestContext,
+    manifest_ctx: &ManifestContext,
     container_cfg: &ContainerConfig,
 ) -> Result<String> {
     let name = manifest_ctx.config.name();
