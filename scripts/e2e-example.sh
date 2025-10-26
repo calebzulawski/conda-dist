@@ -30,6 +30,7 @@ RATTLER_CACHE_DIR="${E2E_CACHE_DIR}" \
     --bin conda-dist -- \
     installer \
     "${MANIFEST}" \
+    --installer-platform host \
     --output "${E2E_OUTPUT_DIR}"
 
 INSTALLER_SCRIPT="$(find "${E2E_OUTPUT_DIR}" -maxdepth 1 -type f -name '*.sh' -print -quit)"
