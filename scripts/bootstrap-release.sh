@@ -6,8 +6,8 @@ repo_root="$(cd "${script_dir}/.." && pwd)"
 
 if [[ $OSTYPE == 'darwin'* ]]; then
     declare -a builds=(
-        "macos-64:x86_64-apple-darwin"
-        "macos-arm64:arm64-apple-darwin"
+        "osx-64:x86_64-apple-darwin"
+        "osx-arm64:aarch64-apple-darwin"
     )
     cargo=cargo
 else

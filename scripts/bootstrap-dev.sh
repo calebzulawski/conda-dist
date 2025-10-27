@@ -24,21 +24,13 @@ conda_platform="$(platform_from_triple "${host_triple}")"
 build_cmd=()
 artifact=""
 
-case "${host_triple}" in
-    x86_64-unknown-linux-gnu)
+case "${conda_platform}" in
+    linux-64)
         build_cmd=(cross build --manifest-path "${repo_root}/Cargo.toml" -p conda-dist-install --release --target x86_64-unknown-linux-musl)
         artifact="${repo_root}/target/x86_64-unknown-linux-musl/release/conda-dist-install"
         ;;
-    aarch64-unknown-linux-gnu)
+    linux-aarch64)
         build_cmd=(cross build --manifest-path "${repo_root}/Cargo.toml" -p conda-dist-install --release --target aarch64-unknown-linux-musl)
-        artifact="${repo_root}/target/aarch64-unknown-linux-musl/release/conda-dist-install"
-        ;;
-    x86_64-unknown-linux-musl)
-        build_cmd=(cargo build --manifest-path "${repo_root}/Cargo.toml" -p conda-dist-install --release --target x86_64-unknown-linux-musl)
-        artifact="${repo_root}/target/x86_64-unknown-linux-musl/release/conda-dist-install"
-        ;;
-    aarch64-unknown-linux-musl)
-        build_cmd=(cargo build --manifest-path "${repo_root}/Cargo.toml" -p conda-dist-install --release --target aarch64-unknown-linux-musl)
         artifact="${repo_root}/target/aarch64-unknown-linux-musl/release/conda-dist-install"
         ;;
     *)
@@ -47,7 +39,7 @@ case "${host_triple}" in
         ;;
 esac
 
-echo "Building conda-dist-install for host (${host_triple}) -> ${conda_platform}"
+echo "Building conda-dist-install for host ${conda_platform}"
 "${build_cmd[@]}"
 
 if [[ ! -f "${artifact}" ]]; then
