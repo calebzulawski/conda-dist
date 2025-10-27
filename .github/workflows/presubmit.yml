@@ -1,0 +1,178 @@
+name: Presubmit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  end-to-end:
+    name: End-to-end test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            cargo: cross
+          - os: macos-15
+            cargo: cargo
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross --locked
+        if: ${{ matrix.cargo == 'cross' }}
+      - name: Run e2e dev script
+        run: ./scripts/e2e-example.sh
+
+  bootstrap-installer:
+    name: Build installers for release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            cargo: cross
+          - os: macos-15
+            cargo: cargo
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos-15' && 'x86_64-apple-darwin' || null }}
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross --locked
+        if: ${{ matrix.cargo == 'cross' }}
+      - name: Run release bootstrap script
+        run: ./scripts/bootstrap-release.sh
+      - name: Upload bootstrap installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootstrap-installers-${{ matrix.os }}
+          path: conda-dist/installers
+          if-no-files-found: error
+
+  build-release:
+    name: Build conda-dist
+    needs: bootstrap-installer
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            cargo: cross
+            target: x86_64-unknown-linux-musl
+            platform: linux-64
+          - os: ubuntu-latest
+            cargo: cross
+            target: aarch64-unknown-linux-musl
+            platform: linux-aarch64
+          - os: macos-latest
+            cargo: cargo
+            target: x86_64-apple-darwin
+            platform: osx-64
+          - os: macos-latest
+            cargo: cargo
+            target: aarch64-apple-darwin
+            platform: osx-arm64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.platform }}
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross --locked
+        if: ${{ matrix.cargo == 'cross' }}
+      - name: Download bootstrapped installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bootstrap-installers-*
+          path: conda-dist/installers
+          merge-multiple: true
+      - name: Build conda-dist
+        run: ${{ matrix.cargo }} build --bin conda-dist --release --locked --target ${{ matrix.target }}
+      - name: Upload conda-dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: conda-dist-${{ matrix.platform }}
+          path: target/${{ matrix.target }}/release/conda-dist
+          if-no-files-found: error
+
+  build-installers:
+    name: Build example application installers
+    needs: build-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-64
+          - os: ubuntu-24.04-arm
+            platform: linux-aarch64
+          - os: macos-15
+            platform: osx-arm64
+          - os: macos-15-intel
+            platform: osx-64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Download conda-dist
+        uses: actions/download-artifact@v4
+        with:
+          name: conda-dist-${{ matrix.platform }}
+          path: release
+      - name: Build example installers
+        run: chmod +x release/conda-dist && release/conda-dist installer examples/bash.toml
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-built-on-${{ matrix.platform }}
+          path: examples/*.sh
+          if-no-files-found: error
+
+  test-installers:
+    name: Test example application installers
+    needs: build-installers
+    runs-on: ${{ matrix.host.os }}
+    strategy:
+      matrix:
+        host:
+          - os: ubuntu-24.04
+            platform: linux-64
+          - os: ubuntu-24.04-arm
+            platform: linux-aarch64
+          - os: macos-15
+            platform: osx-arm64
+          - os: macos-15-intel
+            platform: osx-64
+        from:
+          - linux-64
+          - linux-aarch64
+          - osx-arm64
+          - osx-64
+    steps:
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          name: installers-built-on-${{ matrix.from }}
+      - name: Run installer
+        run: bash bash-${{ matrix.host.platform }}.sh install-dir
+      - name: Test installation
+        run: install-dir/bin/bash --version
