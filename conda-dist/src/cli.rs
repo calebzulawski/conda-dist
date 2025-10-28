@@ -63,6 +63,10 @@ pub struct ContainerArgs {
     /// Regenerate the lockfile instead of reusing any cached version
     #[arg(long = "unlock")]
     pub unlock: bool,
+
+    /// Path to write the resulting OCI archive (defaults to <manifest-dir>/<name>-container.oci.tar)
+    #[arg(long = "oci-output", value_name = "PATH")]
+    pub oci_output: Option<PathBuf>,
 }
 
 pub fn parse() -> Cli {

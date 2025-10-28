@@ -117,10 +117,8 @@ pub async fn prepare_environment(
 
                     let overrides =
                         virtual_package_config.and_then(|cfg| cfg.for_platform(*platform));
-                    let virtual_packages = conda::detect_virtual_packages_for_platform(
-                        *platform,
-                        overrides,
-                    )?;
+                    let virtual_packages =
+                        conda::detect_virtual_packages_for_platform(*platform, overrides)?;
                     let records = conda::solve_environment(
                         &gateway,
                         &channels_for_solve,
