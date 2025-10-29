@@ -563,14 +563,16 @@ async fn build_with_podman(
     specs: &[String],
     output_path: &Path,
 ) -> Result<()> {
-    let combined = specs.join(",");
+    if specs.is_empty() {
+        bail!("no platforms specified for podman build");
+    }
 
     podman_manifest_remove(runtime).await.ok();
 
     let mut cmd = Command::new(runtime.binary());
     cmd.arg("build")
         .arg("--platform")
-        .arg(&combined)
+        .arg(specs.join(","))
         .arg("--manifest")
         .arg(&runtime.tag)
         .arg("--file")
@@ -582,33 +584,43 @@ async fn build_with_podman(
 }
 
 async fn podman_save_image(runtime: &RuntimeConfig, output_path: &Path) -> Result<()> {
-    let mut cmd = Command::new(runtime.binary());
-    cmd.arg("image")
-        .arg("save")
-        .arg("--format")
-        .arg("oci-archive")
-        .arg("--output")
-        .arg(output_path)
-        .arg(&runtime.tag);
+    let archive_path = if output_path.is_absolute() {
+        output_path.to_path_buf()
+    } else {
+        env::current_dir()
+            .context("failed to resolve working directory for podman manifest push")?
+            .join(output_path)
+    };
 
-    run_command(&mut cmd, "podman image save").await
+    if let Some(parent) = archive_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to prepare directory {} for podman export",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+
+    let archive_spec = format!("oci-archive:{}", archive_path.to_string_lossy());
+
+    let mut cmd = Command::new(runtime.binary());
+    cmd.arg("manifest")
+        .arg("push")
+        .arg("--all")
+        .arg(&runtime.tag)
+        .arg(&archive_spec);
+
+    run_command(&mut cmd, "podman manifest push").await
 }
 
 async fn podman_manifest_remove(runtime: &RuntimeConfig) -> Result<()> {
     let mut cmd = Command::new(runtime.binary());
     cmd.arg("manifest").arg("rm").arg(&runtime.tag);
 
-    match run_command(&mut cmd, "podman manifest rm").await {
-        Ok(()) => Ok(()),
-        Err(err) => {
-            let text = err.to_string();
-            if text.contains("no such manifest") || text.contains("not found") {
-                Ok(())
-            } else {
-                Err(err)
-            }
-        }
-    }
+    run_command(&mut cmd, "podman manifest rm").await.ok();
+    Ok(())
 }
 
 fn format_platform_list(platforms: &[Platform]) -> String {
@@ -620,7 +632,7 @@ fn format_platform_list(platforms: &[Platform]) -> String {
 fn platform_to_runtime_spec(platform: Platform) -> Result<&'static str> {
     match platform {
         Platform::Linux64 => Ok("linux/amd64"),
-        Platform::LinuxAarch64 => Ok("linux/arm64"),
+        Platform::LinuxAarch64 => Ok("linux/arm64/v8"),
         Platform::LinuxPpc64le => Ok("linux/ppc64le"),
         Platform::LinuxS390X => Ok("linux/s390x"),
         Platform::Linux32 => Ok("linux/386"),
