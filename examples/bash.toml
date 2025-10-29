@@ -21,5 +21,4 @@ release_notes = """
 - Includes GNU bash and its runtime dependencies from conda-forge.
 """
 success_message = "Bash is ready. Launch it via <prefix>/bin/bash."
-post_install_script = "post-install.sh"
 featured_packages = ["bash"]

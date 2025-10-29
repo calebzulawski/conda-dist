@@ -20,7 +20,6 @@ use crate::{conda::LOCKFILE_NAME, config::BundleMetadataConfig};
 include!(concat!(env!("OUT_DIR"), "/installers.rs"));
 
 const BUNDLE_METADATA_FILE: &str = "bundle-metadata.json";
-const POST_INSTALL_SCRIPT_NAME: &str = "post-install.sh";
 const MAGIC_BYTES: &[u8] = b"CONDADIST!";
 
 #[derive(Serialize)]
@@ -39,8 +38,6 @@ pub struct BundleMetadataManifest {
     pub success_message: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub featured_packages: Vec<FeaturedPackageManifest>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub post_install: Option<PostInstallManifest>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -48,29 +45,16 @@ pub struct FeaturedPackageManifest {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct PostInstallManifest {
-    pub script: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct PostInstallArtifact {
-    pub file_name: String,
-    pub bytes: Vec<u8>,
-    pub executable: bool,
-}
-
 #[derive(Debug, Clone)]
 pub struct PreparedBundleMetadata {
     pub manifest: BundleMetadataManifest,
-    pub post_install: Option<PostInstallArtifact>,
 }
 
 impl PreparedBundleMetadata {
     pub fn from_config(
         environment_name: &str,
         config: Option<&BundleMetadataConfig>,
-        manifest_dir: &Path,
+        _manifest_dir: &Path,
         records: &[RepoDataRecord],
     ) -> Result<Self> {
         let config = config.cloned().unwrap_or_default();
@@ -80,7 +64,6 @@ impl PreparedBundleMetadata {
             release_notes,
             success_message,
             featured_packages,
-            post_install_script,
         } = config;
 
         let display_name = display_name.unwrap_or_else(|| environment_name.to_string());
@@ -111,39 +94,15 @@ impl PreparedBundleMetadata {
             }
         }
 
-        let post_install = if let Some(script_path) = post_install_script {
-            let resolved = manifest_dir.join(&script_path);
-            let script_bytes = fs::read(&resolved).with_context(|| {
-                format!(
-                    "failed to read post-install script at {}",
-                    resolved.display()
-                )
-            })?;
-
-            Some(PostInstallArtifact {
-                file_name: POST_INSTALL_SCRIPT_NAME.to_string(),
-                bytes: script_bytes,
-                executable: true,
-            })
-        } else {
-            None
-        };
-
         let manifest = BundleMetadataManifest {
             display_name,
             description,
             release_notes,
             success_message,
             featured_packages: featured,
-            post_install: post_install.as_ref().map(|artifact| PostInstallManifest {
-                script: artifact.file_name.clone(),
-            }),
         };
 
-        Ok(Self {
-            manifest,
-            post_install,
-        })
+        Ok(Self { manifest })
     }
 }
 
@@ -431,15 +390,6 @@ fn create_tar_gz_for_platform(
         metadata_bytes.as_slice(),
         0o644,
     )?;
-
-    if let Some(script) = &metadata.post_install {
-        append_regular_file(
-            &mut builder,
-            format!("{root_name}/{}", script.file_name),
-            script.bytes.as_slice(),
-            if script.executable { 0o755 } else { 0o644 },
-        )?;
-    }
 
     append_regular_file(
         &mut builder,

@@ -36,8 +36,6 @@ pub struct BundleMetadata {
     pub success_message: Option<String>,
     #[serde(default)]
     pub featured_packages: Vec<FeaturedPackage>,
-    #[serde(default)]
-    pub post_install: Option<PostInstall>,
 }
 
 impl BundleMetadata {
@@ -48,7 +46,6 @@ impl BundleMetadata {
             release_notes: None,
             success_message: None,
             featured_packages: Vec::new(),
-            post_install: None,
         }
     }
 }
@@ -56,11 +53,6 @@ impl BundleMetadata {
 #[derive(Debug, Clone, Deserialize)]
 pub struct FeaturedPackage {
     pub name: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct PostInstall {
-    pub script: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

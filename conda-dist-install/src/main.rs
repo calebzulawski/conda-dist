@@ -40,5 +40,5 @@ async fn main() -> Result<()> {
     })?;
 
     let bundle = bundle::load_bundle()?;
-    operations::install(&prefix, &bundle, &project_name).await
+    operations::install(&prefix, &bundle).await
 }
