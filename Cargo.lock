@@ -1037,7 +1037,6 @@ name = "conda-dist"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
  "clap",
  "flate2",
  "futures",
@@ -1068,6 +1067,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "flate2",
  "rattler",
  "rattler_conda_types",
  "rattler_lock",
@@ -1075,6 +1075,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tabled",
+ "tar",
  "tempfile",
  "tokio",
  "url",

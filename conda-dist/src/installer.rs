@@ -1,5 +1,6 @@
 use std::{
     collections::HashSet,
+    convert::TryFrom,
     fs,
     io::{Cursor, Write},
     path::{Path, PathBuf},
@@ -7,7 +8,6 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use flate2::{Compression, write::GzEncoder};
 use rattler_conda_types::{PackageName, Platform, RepoDataRecord};
 use serde::Serialize;
@@ -21,6 +21,12 @@ include!(concat!(env!("OUT_DIR"), "/installers.rs"));
 
 const BUNDLE_METADATA_FILE: &str = "bundle-metadata.json";
 const POST_INSTALL_SCRIPT_NAME: &str = "post-install.sh";
+const MAGIC_BYTES: &[u8] = b"CONDADIST!";
+
+#[derive(Serialize)]
+struct LauncherMetadata {
+    display_name: String,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BundleMetadataManifest {
@@ -172,7 +178,7 @@ pub fn resolve_script_path(requested: PathBuf, environment_name: &str) -> Result
             )
         })?;
         if metadata.is_dir() {
-            return Ok(requested.join(format!("{environment_name}.sh")));
+            return Ok(requested.join(environment_name));
         }
     }
 
@@ -238,7 +244,7 @@ pub fn create_installers(
     metadata: &PreparedBundleMetadata,
     progress: &ProgressBar,
 ) -> Result<Vec<PathBuf>> {
-    let output_dir = installer_output_directory(script_path)?;
+    let (output_dir, name_prefix) = installer_output_spec(script_path, environment_name)?;
 
     if script_path.exists() && !script_path.is_dir() {
         fs::remove_file(script_path)
@@ -275,6 +281,7 @@ pub fn create_installers(
     progress.tick();
 
     let mut written = Vec::new();
+    let metadata_blob = launcher_metadata_blob(metadata)?;
     for (index, platform) in selected_platforms.iter().enumerate() {
         let installer_bytes = embedded_installer_for_platform(*platform).with_context(|| {
             format!(
@@ -297,10 +304,15 @@ pub fn create_installers(
             )
         })?;
 
-        let installer_name = format!("{environment_name}-{}.sh", platform.as_str());
+        let installer_name = format!("{name_prefix}-{}", platform.as_str());
         let target_path = output_dir.join(installer_name);
-        write_self_extracting_script(&target_path, environment_name, &archive_bytes)
-            .with_context(|| format!("failed to write installer {}", target_path.display()))?;
+        write_self_extracting_installer(
+            &target_path,
+            installer_bytes,
+            &metadata_blob,
+            &archive_bytes,
+        )
+        .with_context(|| format!("failed to write installer {}", target_path.display()))?;
         written.push(target_path);
 
         let done = index + 1;
@@ -319,24 +331,30 @@ fn embedded_installer_for_platform(platform: Platform) -> Option<&'static [u8]> 
         .map(|(_, bytes)| *bytes)
 }
 
-fn installer_output_directory(script_path: &Path) -> Result<PathBuf> {
+fn installer_output_spec(script_path: &Path, environment_name: &str) -> Result<(PathBuf, String)> {
     if script_path.is_dir() {
-        return Ok(script_path.to_path_buf());
+        return Ok((script_path.to_path_buf(), environment_name.to_string()));
     }
 
-    if !script_path.exists() && script_path.extension().is_none() {
-        return Ok(script_path.to_path_buf());
-    }
+    let prefix = script_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| environment_name.to_string());
 
-    if let Some(parent) = script_path.parent() {
-        if parent.as_os_str().is_empty() {
-            Ok(PathBuf::from("."))
-        } else {
-            Ok(parent.to_path_buf())
-        }
-    } else {
-        Ok(PathBuf::from("."))
-    }
+    let output_dir = script_path
+        .parent()
+        .map(|parent| {
+            if parent.as_os_str().is_empty() {
+                PathBuf::from(".")
+            } else {
+                parent.to_path_buf()
+            }
+        })
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    Ok((output_dir, prefix))
 }
 
 fn create_tar_gz_for_platform(
@@ -460,55 +478,20 @@ fn append_regular_file<W: Write>(
     Ok(())
 }
 
-fn installer_prologue(environment_name: &str) -> String {
-    format!(
-        r#"#!/bin/sh
-set -eu
-
-env_name=$(cat <<'CONDADIST_ENV_NAME'
-{env_name}
-CONDADIST_ENV_NAME
-)
-
-temp_dir="$(mktemp -d)"
-cleanup() {{
-    rm -rf "$temp_dir"
-}}
-trap cleanup EXIT INT TERM
-
-payload_line=$(awk '/^__ARCHIVE_BELOW__/ {{ print NR + 1; exit }}' "$0")
-tail -n +"$payload_line" "$0" | base64 -d | tar -xz -C "$temp_dir"
-
-bundle_dir="$temp_dir/$env_name"
-installer_path="$bundle_dir/installer"
-
-if [ ! -x "$installer_path" ]; then
-    chmod +x "$installer_path"
-fi
-
-export CONDA_DIST_BUNDLE_DIR="$bundle_dir"
-export CONDA_DIST_PROJECT_NAME="$env_name"
-
-if "$installer_path" "$@"; then
-    status=0
-else
-    status=$?
-fi
-
-exit "$status"
-
-__ARCHIVE_BELOW__
-"#,
-        env_name = environment_name
-    )
+fn launcher_metadata_blob(metadata: &PreparedBundleMetadata) -> Result<Vec<u8>> {
+    let launcher_metadata = LauncherMetadata {
+        display_name: metadata.manifest.display_name.clone(),
+    };
+    serde_json::to_vec(&launcher_metadata).context("failed to encode launcher metadata")
 }
 
-fn write_self_extracting_script(
-    script_path: &Path,
-    environment_name: &str,
-    archive_bytes: &[u8],
+fn write_self_extracting_installer(
+    output_path: &Path,
+    installer_bytes: &[u8],
+    metadata_bytes: &[u8],
+    payload_bytes: &[u8],
 ) -> Result<()> {
-    if let Some(parent) = script_path.parent() {
+    if let Some(parent) = output_path.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent).with_context(|| {
                 format!("failed to create parent directory {}", parent.display())
@@ -516,34 +499,62 @@ fn write_self_extracting_script(
         }
     }
 
-    let prologue = installer_prologue(environment_name);
-    let mut file = fs::File::create(script_path)
-        .with_context(|| format!("failed to create {}", script_path.display()))?;
-    file.write_all(prologue.as_bytes())
-        .with_context(|| format!("failed to write script header {}", script_path.display()))?;
+    let mut file = fs::File::create(output_path)
+        .with_context(|| format!("failed to create {}", output_path.display()))?;
+    file.write_all(installer_bytes)
+        .with_context(|| format!("failed to write installer stub {}", output_path.display()))?;
 
-    let encoded = STANDARD.encode(archive_bytes);
-    for chunk in encoded.as_bytes().chunks(76) {
-        file.write_all(chunk).with_context(|| {
-            format!("failed to write archive chunk to {}", script_path.display())
+    let metadata_len =
+        u64::try_from(metadata_bytes.len()).context("installer metadata is too large to encode")?;
+    let payload_len =
+        u64::try_from(payload_bytes.len()).context("installer payload is too large to encode")?;
+
+    file.write_all(metadata_bytes).with_context(|| {
+        format!(
+            "failed to write installer metadata to {}",
+            output_path.display()
+        )
+    })?;
+    file.write_all(&metadata_len.to_le_bytes())
+        .with_context(|| {
+            format!(
+                "failed to finalize metadata length in {}",
+                output_path.display()
+            )
         })?;
-        file.write_all(b"\n")
-            .with_context(|| format!("failed to finalize newline in {}", script_path.display()))?;
-    }
+    file.write_all(payload_bytes).with_context(|| {
+        format!(
+            "failed to write archive payload to {}",
+            output_path.display()
+        )
+    })?;
+    file.write_all(&payload_len.to_le_bytes())
+        .with_context(|| {
+            format!(
+                "failed to finalize installer payload size in {}",
+                output_path.display()
+            )
+        })?;
+    file.write_all(MAGIC_BYTES).with_context(|| {
+        format!(
+            "failed to write installer marker to {}",
+            output_path.display()
+        )
+    })?;
     file.flush()
-        .with_context(|| format!("failed to flush {}", script_path.display()))?;
+        .with_context(|| format!("failed to flush {}", output_path.display()))?;
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(script_path)
-            .with_context(|| format!("failed to read permissions for {}", script_path.display()))?
+        let mut perms = fs::metadata(output_path)
+            .with_context(|| format!("failed to read permissions for {}", output_path.display()))?
             .permissions();
         perms.set_mode(0o755);
-        fs::set_permissions(script_path, perms).with_context(|| {
+        fs::set_permissions(output_path, perms).with_context(|| {
             format!(
                 "failed to set executable permissions on {}",
-                script_path.display()
+                output_path.display()
             )
         })?;
     }

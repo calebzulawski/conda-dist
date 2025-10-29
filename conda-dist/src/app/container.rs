@@ -386,7 +386,7 @@ fn create_build_context(
     let mut case_entries = Vec::new();
     for (platform, source_path) in installers {
         let spec = platform_to_runtime_spec(*platform)?;
-        let filename = format!("installer-{}.sh", spec.replace('/', "-"));
+        let filename = format!("installer-{}", spec.replace('/', "-"));
         let staged_installer = installers_dir.join(&filename);
 
         if staged_installer.exists() {

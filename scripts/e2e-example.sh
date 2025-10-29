@@ -33,25 +33,25 @@ RATTLER_CACHE_DIR="${E2E_CACHE_DIR}" \
     --installer-platform host \
     --output "${E2E_OUTPUT_DIR}"
 
-INSTALLER_SCRIPT="$(find "${E2E_OUTPUT_DIR}" -maxdepth 1 -type f -name '*.sh' -print -quit)"
-if [[ -z "${INSTALLER_SCRIPT}" ]]; then
-    echo "error: no installer script produced"
+INSTALLER_PATH="$(find "${E2E_OUTPUT_DIR}" -type f -print -quit)"
+if [[ -z "${INSTALLER_PATH}" ]]; then
+    echo "error: no installer produced"
     exit 1
 fi
-echo "==> Installer generated at ${INSTALLER_SCRIPT}"
+echo "==> Installer generated at ${INSTALLER_PATH}"
 
 echo "==> Displaying bundle summary"
-bash "${INSTALLER_SCRIPT}" --summary
+"${INSTALLER_PATH}" --summary
 
 echo "==> Listing packages (table)"
-bash "${INSTALLER_SCRIPT}" --list-packages
+"${INSTALLER_PATH}" --list-packages
 
 echo "==> Listing packages (JSON)"
-bash "${INSTALLER_SCRIPT}" --list-packages-json
+"${INSTALLER_PATH}" --list-packages-json
 
 echo "==> Installing into ${E2E_INSTALL_DIR}"
 mkdir -p "${E2E_INSTALL_DIR}"
-bash "${INSTALLER_SCRIPT}" "${E2E_INSTALL_DIR}"
+"${INSTALLER_PATH}" "${E2E_INSTALL_DIR}"
 
 echo "==> Running installed bash"
 "${E2E_INSTALL_DIR}/${TEST_COMMAND}" --version

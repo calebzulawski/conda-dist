@@ -18,9 +18,7 @@ pub async fn execute(args: InstallerArgs, work_dir: Option<PathBuf>) -> Result<(
     let environment_name = manifest_ctx.config.name();
     let workspace = Workspace::from_manifest_dir(&manifest_ctx.manifest_dir, work_dir)?;
 
-    let default_script_path = manifest_ctx
-        .manifest_dir
-        .join(format!("{environment_name}.sh"));
+    let default_script_path = manifest_ctx.manifest_dir.join(environment_name);
     let script_path =
         installer::resolve_script_path(output.unwrap_or(default_script_path), environment_name)?;
 
