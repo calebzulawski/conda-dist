@@ -154,7 +154,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runtime: [docker, podman]
+        include:
+          - runtime: docker
+          - runtime: podman
+            container:
+              image: quay.io/podman/stable:v5.6.2
+              options: --privileged
+    container: ${{ matrix.container || null }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -171,11 +177,6 @@ jobs:
       - name: Set up Docker Buildx
         if: ${{ matrix.runtime == 'docker' }}
         uses: docker/setup-buildx-action@v3
-      - name: Install podman dependencies
-        if: ${{ matrix.runtime == 'podman' }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y podman qemu-user-static uidmap fuse-overlayfs
       - name: Build container image
         env:
           RUNTIME: ${{ matrix.runtime }}
@@ -237,13 +238,23 @@ jobs:
           - os: ubuntu-24.04-arm
             arch: arm64
         source: [docker, podman]
+        include:
+          - runtime: docker
+          - runtime: podman
+            container:
+              image: quay.io/podman/stable:v5.6.2
+              options: --privileged
     runs-on: ${{ matrix.host.os }}
+    container: ${{ matrix.container || null }}
     steps:
-      - name: Install podman dependencies
-        if: ${{ matrix.runtime == 'podman' }}
+      - name: Install Docker prerequisites
+        if: ${{ matrix.runtime == 'docker' }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y podman uidmap fuse-overlayfs
+          sudo apt-get install -y skopeo
+      - name: Install Podman prerequisites
+        if: ${{ matrix.runtime == 'podman' }}
+        run: dnf -y install skopeo
       - name: Download container image
         uses: actions/download-artifact@v4
         with:
@@ -252,16 +263,12 @@ jobs:
       - name: Prepare Docker image
         if: ${{ matrix.runtime == 'docker' }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y skopeo
           docker image rm -f registry.example.com/example/bash:1.0.0 || true
           skopeo copy oci-archive:containers/bash-${{ matrix.source }}.oci.tar docker-daemon:registry.example.com/example/bash:1.0.0
       - name: Prepare Podman image
         if: ${{ matrix.runtime == 'podman' }}
-        run: podman image load --input containers/bash-${{ matrix.source }}.oci.tar
-      - name: Run container test (docker)
-        if: ${{ matrix.runtime == 'docker' }}
-        run: docker run --rm registry.example.com/example/bash:1.0.0 /opt/bash/bin/bash --version
-      - name: Run container test (podman)
-        if: ${{ matrix.runtime == 'podman' }}
-        run: podman run --rm registry.example.com/example/bash:1.0.0 /opt/bash/bin/bash --version
+        run: |
+          podman image rm -f registry.example.com/example/bash:1.0.0 || true
+          skopeo copy oci-archive:containers/bash-${{ matrix.source }}.oci.tar containers-storage:registry.example.com/example/bash:1.0.0
+      - name: Run container test
+        run: ${{ matrix.runtime }} run --rm registry.example.com/example/bash:1.0.0 /opt/bash/bin/bash --version
