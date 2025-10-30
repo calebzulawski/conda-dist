@@ -38,10 +38,6 @@ pub fn print_bundle_summary(
         }
     }
 
-    if metadata.post_install.is_some() {
-        println!("\nThis installer includes a post-install script.");
-    }
-
     Ok(())
 }
 

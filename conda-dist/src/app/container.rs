@@ -365,7 +365,6 @@ fn create_build_context(
 
     let dockerfile_path = context_dir.join("Dockerfile");
     let installers_dir = context_dir.join("installers");
-    let run_script_path = context_dir.join("run-installer.sh");
 
     if installers_dir.exists() {
         fs::remove_dir_all(&installers_dir).with_context(|| {
@@ -383,10 +382,13 @@ fn create_build_context(
         )
     })?;
 
-    let mut case_entries = Vec::new();
     for (platform, source_path) in installers {
         let spec = platform_to_runtime_spec(*platform)?;
-        let filename = format!("installer-{}.sh", spec.replace('/', "-"));
+        let arch = spec
+            .split('/')
+            .nth(1)
+            .ok_or_else(|| anyhow!("unsupported runtime specification '{}'", spec))?;
+        let filename = format!("installer-{}", arch);
         let staged_installer = installers_dir.join(&filename);
 
         if staged_installer.exists() {
@@ -412,74 +414,20 @@ fn create_build_context(
             perms.set_mode(0o755);
             fs::set_permissions(&staged_installer, perms)?;
         }
-
-        case_entries.push((spec.to_string(), filename));
-    }
-
-    let case_lines = case_entries
-        .iter()
-        .map(|(spec, filename)| {
-            format!("  \"{spec}\") installer=\"/tmp/installers/{filename}\" ;;")
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let script_contents = format!(
-        r#"#!/bin/bash
-set -euo pipefail
-
-TARGET="${{1:-}}"
-PREFIX="${{2:-}}"
-
-case "$TARGET" in
-{cases}
-  *) echo "unsupported TARGETPLATFORM: $TARGET" >&2; exit 1 ;;
-esac
-
-chmod +x "$installer"
-if ! "$installer" "$PREFIX" > /tmp/conda-dist-install.log 2>&1; then
-  cat /tmp/conda-dist-install.log
-  exit 1
-fi
-
-rm -f "$installer"
-rm -rf /tmp/installers
-rm -f /tmp/run-installer.sh
-"#,
-        cases = case_lines
-    );
-
-    fs::write(&run_script_path, script_contents).with_context(|| {
-        format!(
-            "failed to write installer runner script {}",
-            run_script_path.display()
-        )
-    })?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&run_script_path)?.permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&run_script_path, perms)?;
     }
 
     let dockerfile_contents = format!(
-        r#"FROM {builder} AS builder
-ARG TARGETPLATFORM
-COPY installers/ /tmp/installers/
-COPY run-installer.sh /tmp/run-installer.sh
-RUN /bin/bash -c "set -euo pipefail \
- && chmod +x /tmp/run-installer.sh \
- && /tmp/run-installer.sh \"$TARGETPLATFORM\" \"{prefix}\""
+        r#"# syntax=docker/dockerfile:1.6
+FROM scratch AS installer_payload
+COPY installers/ /installers/
 
 FROM {base}
-COPY --from=builder "{prefix}" "{prefix}"
+ARG TARGETARCH
+RUN --mount=type=bind,from=installer_payload,source=/installers/installer-${{TARGETARCH}},target=/tmp/installer,ro ["/tmp/installer", "{prefix}"]
 ENV CONDA_PREFIX="{prefix}" \
     PATH="{prefix}/bin:${{PATH}}"
 LABEL org.opencontainers.image.title="{title}"
 "#,
-        builder = container_cfg.builder_image,
         prefix = install_prefix,
         base = container_cfg.base_image,
         title = environment_name
@@ -615,14 +563,16 @@ async fn build_with_podman(
     specs: &[String],
     output_path: &Path,
 ) -> Result<()> {
-    let combined = specs.join(",");
+    if specs.is_empty() {
+        bail!("no platforms specified for podman build");
+    }
 
     podman_manifest_remove(runtime).await.ok();
 
     let mut cmd = Command::new(runtime.binary());
     cmd.arg("build")
         .arg("--platform")
-        .arg(&combined)
+        .arg(specs.join(","))
         .arg("--manifest")
         .arg(&runtime.tag)
         .arg("--file")
@@ -634,33 +584,43 @@ async fn build_with_podman(
 }
 
 async fn podman_save_image(runtime: &RuntimeConfig, output_path: &Path) -> Result<()> {
-    let mut cmd = Command::new(runtime.binary());
-    cmd.arg("image")
-        .arg("save")
-        .arg("--format")
-        .arg("oci-archive")
-        .arg("--output")
-        .arg(output_path)
-        .arg(&runtime.tag);
+    let archive_path = if output_path.is_absolute() {
+        output_path.to_path_buf()
+    } else {
+        env::current_dir()
+            .context("failed to resolve working directory for podman manifest push")?
+            .join(output_path)
+    };
 
-    run_command(&mut cmd, "podman image save").await
+    if let Some(parent) = archive_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to prepare directory {} for podman export",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+
+    let archive_spec = format!("oci-archive:{}", archive_path.to_string_lossy());
+
+    let mut cmd = Command::new(runtime.binary());
+    cmd.arg("manifest")
+        .arg("push")
+        .arg("--all")
+        .arg(&runtime.tag)
+        .arg(&archive_spec);
+
+    run_command(&mut cmd, "podman manifest push").await
 }
 
 async fn podman_manifest_remove(runtime: &RuntimeConfig) -> Result<()> {
     let mut cmd = Command::new(runtime.binary());
     cmd.arg("manifest").arg("rm").arg(&runtime.tag);
 
-    match run_command(&mut cmd, "podman manifest rm").await {
-        Ok(()) => Ok(()),
-        Err(err) => {
-            let text = err.to_string();
-            if text.contains("no such manifest") || text.contains("not found") {
-                Ok(())
-            } else {
-                Err(err)
-            }
-        }
-    }
+    run_command(&mut cmd, "podman manifest rm").await.ok();
+    Ok(())
 }
 
 fn format_platform_list(platforms: &[Platform]) -> String {
@@ -672,7 +632,7 @@ fn format_platform_list(platforms: &[Platform]) -> String {
 fn platform_to_runtime_spec(platform: Platform) -> Result<&'static str> {
     match platform {
         Platform::Linux64 => Ok("linux/amd64"),
-        Platform::LinuxAarch64 => Ok("linux/arm64"),
+        Platform::LinuxAarch64 => Ok("linux/arm64/v8"),
         Platform::LinuxPpc64le => Ok("linux/ppc64le"),
         Platform::LinuxS390X => Ok("linux/s390x"),
         Platform::Linux32 => Ok("linux/386"),

@@ -107,16 +107,12 @@ pub struct BundleMetadataConfig {
     pub success_message: Option<String>,
     #[serde(default)]
     pub featured_packages: Vec<String>,
-    #[serde(default)]
-    pub post_install_script: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ContainerConfig {
     #[serde(default = "default_base_image")]
     pub base_image: String,
-    #[serde(default = "default_builder_image")]
-    pub builder_image: String,
     #[serde(default)]
     pub prefix: Option<String>,
     #[serde(default)]
@@ -129,7 +125,6 @@ impl Default for ContainerConfig {
     fn default() -> Self {
         Self {
             base_image: default_base_image(),
-            builder_image: default_builder_image(),
             prefix: None,
             registry: None,
             organization: None,
@@ -139,10 +134,6 @@ impl Default for ContainerConfig {
 
 fn default_base_image() -> String {
     "gcr.io/distroless/base-debian12".to_string()
-}
-
-fn default_builder_image() -> String {
-    "docker.io/library/debian:bookworm-slim".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

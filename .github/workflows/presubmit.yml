@@ -144,7 +144,53 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: installers-built-on-${{ matrix.platform }}
-          path: examples/*.sh
+          path: examples/bash-*
+          if-no-files-found: error
+
+  build-container-images:
+    name: Build example container images
+    needs: build-release
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runtime: docker
+          - runtime: podman
+            container:
+              image: quay.io/podman/stable:v5.6.2
+              options: --privileged
+    container: ${{ matrix.container || null }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Download conda-dist
+        uses: actions/download-artifact@v4
+        with:
+          name: conda-dist-linux-64
+          path: release
+      - name: Make conda-dist executable
+        run: chmod +x release/conda-dist
+      - name: Set up QEMU for docker
+        if: ${{ matrix.runtime == 'docker' }}
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        if: ${{ matrix.runtime == 'docker' }}
+        uses: docker/setup-buildx-action@v3
+      - name: Build container image
+        env:
+          RUNTIME: ${{ matrix.runtime }}
+        run: |
+          mkdir -p containers
+          ENGINE=$(command -v "$RUNTIME")
+          OUTPUT=containers/bash-${RUNTIME}.oci.tar
+          echo "OUTPUT_FILE=$OUTPUT" >> "$GITHUB_ENV"
+          release/conda-dist container examples/bash.toml --engine "$ENGINE" --oci-output "$OUTPUT"
+      - name: Upload container image
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-${{ matrix.runtime }}
+          path: ${{ env.OUTPUT_FILE }}
           if-no-files-found: error
 
   test-installers:
@@ -173,6 +219,56 @@ jobs:
         with:
           name: installers-built-on-${{ matrix.from }}
       - name: Run installer
-        run: bash bash-${{ matrix.host.platform }}.sh install-dir
+        run: |
+          chmod +x bash-${{ matrix.host.platform }}
+          ./bash-${{ matrix.host.platform }} install-dir
       - name: Test installation
         run: install-dir/bin/bash --version
+
+  test-container-images:
+    name: Test example container images
+    needs: build-container-images
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [docker, podman]
+        host:
+          - os: ubuntu-24.04
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+        source: [docker, podman]
+        include:
+          - runtime: docker
+          - runtime: podman
+            container:
+              image: quay.io/podman/stable:v5.6.2
+              options: --privileged
+    runs-on: ${{ matrix.host.os }}
+    container: ${{ matrix.container || null }}
+    steps:
+      - name: Install Docker prerequisites
+        if: ${{ matrix.runtime == 'docker' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+      - name: Install Podman prerequisites
+        if: ${{ matrix.runtime == 'podman' }}
+        run: dnf -y install skopeo
+      - name: Download container image
+        uses: actions/download-artifact@v4
+        with:
+          name: container-${{ matrix.source }}
+          path: containers
+      - name: Prepare Docker image
+        if: ${{ matrix.runtime == 'docker' }}
+        run: |
+          docker image rm -f registry.example.com/example/bash:1.0.0 || true
+          skopeo copy oci-archive:containers/bash-${{ matrix.source }}.oci.tar docker-daemon:registry.example.com/example/bash:1.0.0
+      - name: Prepare Podman image
+        if: ${{ matrix.runtime == 'podman' }}
+        run: |
+          podman image rm -f registry.example.com/example/bash:1.0.0 || true
+          skopeo copy oci-archive:containers/bash-${{ matrix.source }}.oci.tar containers-storage:registry.example.com/example/bash:1.0.0
+      - name: Run container test
+        run: ${{ matrix.runtime }} run --rm registry.example.com/example/bash:1.0.0 /opt/bash/bin/bash --version
