@@ -10,8 +10,8 @@ use anyhow::{Result, anyhow};
 #[tokio::main]
 async fn main() -> Result<()> {
     let launcher_metadata = bundle::read_embedded_metadata()?;
-    let project_name = env::var("CONDA_DIST_PROJECT_NAME")
-        .unwrap_or_else(|_| launcher_metadata.display_name.clone());
+    let project_name =
+        env::var("CONDA_DIST_PROJECT_NAME").unwrap_or_else(|_| launcher_metadata.summary.clone());
 
     let cli = cli::parse(&project_name)?;
 

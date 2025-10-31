@@ -1,0 +1,12 @@
+[book]
+title = "conda-dist manual"
+authors = ["Caleb Zulawski"]
+language = "en"
+
+[build]
+create-missing = true
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/calebzulawski/conda-dist"

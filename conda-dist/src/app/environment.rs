@@ -161,6 +161,7 @@ pub async fn prepare_environment(
         manifest_ctx.config.metadata(),
         &manifest_ctx.manifest_dir,
         &solved_records,
+        manifest_ctx.config.author(),
     )?;
 
     let package_cache_dir = workspace.package_cache_dir();

@@ -250,10 +250,7 @@ fn derive_image_tag(
     container_cfg: &ContainerConfig,
 ) -> Result<String> {
     let name = manifest_ctx.config.name();
-    let version = manifest_ctx.config.version().ok_or_else(|| {
-        anyhow!("manifest is missing required field 'version' for container builds")
-    })?;
-    let version = version.trim();
+    let version = manifest_ctx.config.version().trim();
     if version.is_empty() {
         bail!("manifest 'version' field cannot be empty for container builds");
     }
@@ -261,27 +258,29 @@ fn derive_image_tag(
         bail!("manifest 'version' field must not contain whitespace");
     }
 
-    let mut segments = Vec::new();
-    if let Some(registry) = container_cfg
-        .registry
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        segments.push(registry.trim_matches('/').to_string());
+    let template = container_cfg.tag_template.trim();
+    if template.is_empty() {
+        bail!("container 'tag_template' must not be empty");
     }
-    if let Some(org) = container_cfg
-        .organization
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        segments.push(org.trim_matches('/').to_string());
-    }
-    segments.push(name.to_string());
 
-    let repository = segments.join("/");
-    Ok(format!("{repository}:{version}"))
+    let rendered = template
+        .replace("{name}", name)
+        .replace("{version}", version);
+    if rendered.contains('{') || rendered.contains('}') {
+        bail!(
+            "container tag template contains unsupported placeholders; allowed variables: {{name}}, {{version}}"
+        );
+    }
+
+    let tag = rendered.trim();
+    if tag.is_empty() {
+        bail!("container tag template resolved to an empty tag");
+    }
+    if tag.chars().any(|ch| ch.is_whitespace()) {
+        bail!("container tag '{tag}' must not contain whitespace");
+    }
+
+    Ok(tag.to_string())
 }
 
 fn prepare_self_extracting_installers(

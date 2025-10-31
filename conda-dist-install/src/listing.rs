@@ -13,7 +13,8 @@ pub fn print_bundle_summary(
     records: &[RepoDataRecord],
     channel_dir: &Path,
 ) -> Result<()> {
-    println!("Bundle: {}", metadata.display_name);
+    println!("Bundle: {}", metadata.summary);
+    println!("Maintainer: {}", metadata.author);
 
     if let Some(description) = metadata.description.as_deref() {
         println!();

@@ -2,9 +2,7 @@ use std::str::FromStr;
 
 use anyhow::{Context, Result};
 use rattler_conda_types::{GenericVirtualPackage, Platform, Version};
-use rattler_virtual_packages::{
-    Archspec, Cuda, LibC, Linux, Osx, VirtualPackageOverrides, VirtualPackages, Windows,
-};
+use rattler_virtual_packages::{Archspec, Cuda, LibC, Linux, Osx, VirtualPackages, Windows};
 
 use crate::config::PlatformVirtualPackageConfig;
 
@@ -12,8 +10,33 @@ pub fn detect_virtual_packages_for_platform(
     platform: Platform,
     overrides: Option<&PlatformVirtualPackageConfig>,
 ) -> Result<Vec<GenericVirtualPackage>> {
-    let package_overrides = VirtualPackageOverrides::default();
-    let mut packages = VirtualPackages::detect_for_platform(platform, &package_overrides)?;
+    let mut packages = VirtualPackages::default();
+    packages.unix = platform.is_unix();
+
+    if platform.is_windows() {
+        packages.win = Some(Windows {
+            version: Some(parse_version(DEFAULT_WINDOWS_VERSION, "__win", platform)?),
+        });
+    }
+    if platform.is_linux() {
+        packages.linux = Some(Linux::from(parse_version(
+            DEFAULT_LINUX_VERSION,
+            "__linux",
+            platform,
+        )?));
+        packages.libc = Some(LibC {
+            family: "glibc".into(),
+            version: parse_version(DEFAULT_GLIBC_VERSION, "__glibc", platform)?,
+        });
+    }
+    if platform.is_osx() {
+        packages.osx = Some(Osx::from(parse_version(
+            DEFAULT_OSX_VERSION,
+            "__osx",
+            platform,
+        )?));
+    }
+    packages.archspec = Archspec::from_platform(platform);
 
     apply_cross_platform_defaults(platform, &mut packages)?;
 
@@ -67,14 +90,6 @@ fn apply_overrides(
         } else {
             let version = parse_version(value, "__cuda", platform)?;
             packages.cuda = Some(Cuda::from(version));
-        }
-    }
-
-    if let Some(value) = config.archspec.as_ref() {
-        if value.trim().is_empty() {
-            packages.archspec = None;
-        } else {
-            packages.archspec = Some(Archspec::from_name(value.trim()));
         }
     }
 
