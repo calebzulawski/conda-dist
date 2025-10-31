@@ -1,0 +1,51 @@
+name: mdBook
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Install mdBook
+        run: cargo install mdbook --locked
+
+      - name: Build documentation
+        run: mdbook build docs
+
+      - name: Archive built book
+        uses: actions/upload-artifact@v4
+        with:
+          name: mdbook
+          path: docs/book
+
+  deploy:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download built book
+        uses: actions/download-artifact@v4
+        with:
+          name: mdbook
+          path: docs/book
+
+      - name: Publish to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: docs/book
+          publish_branch: gh-pages
+          force_orphan: true
