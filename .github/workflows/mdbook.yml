@@ -22,13 +22,18 @@ jobs:
         run: mdbook build docs
 
       - name: Archive built book
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-pages-artifact@v4
         with:
-          name: mdbook
           path: docs/book
 
   deploy:
     needs: build
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     steps:
@@ -39,9 +44,4 @@ jobs:
           path: docs/book
 
       - name: Publish to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: docs/book
-          publish_branch: gh-pages
-          force_orphan: true
+        uses: actions/deploy-pages@v4
