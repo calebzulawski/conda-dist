@@ -144,7 +144,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: installers-built-on-${{ matrix.platform }}
-          path: examples/bash-*
+          path: examples/portable-bash-*
           if-no-files-found: error
 
   build-container-images:
@@ -183,7 +183,7 @@ jobs:
         run: |
           mkdir -p containers
           ENGINE=$(command -v "$RUNTIME")
-          OUTPUT=containers/bash-${RUNTIME}.oci.tar
+          OUTPUT=containers/portable-bash-${RUNTIME}.oci.tar
           echo "OUTPUT_FILE=$OUTPUT" >> "$GITHUB_ENV"
           release/conda-dist container examples/bash.toml --engine "$ENGINE" --oci-output "$OUTPUT"
       - name: Upload container image
@@ -191,6 +191,36 @@ jobs:
         with:
           name: container-${{ matrix.runtime }}
           path: ${{ env.OUTPUT_FILE }}
+          if-no-files-found: error
+
+  build-native-packages:
+    name: Build example native packages
+    needs: build-release
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Download conda-dist
+        uses: actions/download-artifact@v5
+        with:
+          name: conda-dist-linux-64
+          path: release
+      - name: Make conda-dist executable
+        run: chmod +x release/conda-dist
+      - name: Build native packages
+        env:
+          RPM_IMAGE: redhat/ubi10
+          DEB_IMAGE: ubuntu:24.04
+        run: |
+          rm -rf examples/portable-bash-packages
+          release/conda-dist package examples/bash.toml \
+            --rpm-image "$RPM_IMAGE" \
+            --deb-image "$DEB_IMAGE"
+      - name: Upload native packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-packages-linux-64
+          path: examples/portable-bash-packages
           if-no-files-found: error
 
   test-installers:
@@ -220,10 +250,44 @@ jobs:
           name: installers-built-on-${{ matrix.from }}
       - name: Run installer
         run: |
-          chmod +x bash-${{ matrix.host.platform }}
-          ./bash-${{ matrix.host.platform }} install-dir
+          chmod +x portable-bash-${{ matrix.host.platform }}
+          ./portable-bash-${{ matrix.host.platform }} install-dir
       - name: Test installation
         run: install-dir/bin/bash --version
+
+  test-native-packages:
+    name: Test example native packages
+    needs: build-native-packages
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - format: rpm
+            container: redhat/ubi10
+            package_dir: native-packages/rpm/linux-64/redhat_ubi10
+            package_ext: rpm
+            install: dnf install -y
+          - format: deb
+            container: ubuntu:24.04
+            package_dir: native-packages/deb/linux-64/ubuntu_24_04
+            package_ext: deb
+            install: apt install -y
+    container: ${{ matrix.container }}
+    steps:
+      - name: Download native packages
+        uses: actions/download-artifact@v5
+        with:
+          name: native-packages-linux-64
+          path: native-packages
+      - name: Install package
+        run: |
+          PACKAGE=$(find "$GITHUB_WORKSPACE/${{ matrix.package_dir }}" -name "*.${{ matrix.package_ext }}")
+          echo $PACKAGE
+          test -f $PACKAGE
+          ${{ matrix.install }} $PACKAGE
+      - name: Run package test
+        run: /opt/portable-bash/bin/bash --version
 
   test-container-images:
     name: Test example container images
@@ -240,7 +304,9 @@ jobs:
         source: [docker, podman]
         include:
           - runtime: docker
+            storage: docker-daemon
           - runtime: podman
+            storage: containers-storage
             container:
               image: quay.io/podman/stable:v5.6.2
               options: --privileged
@@ -260,15 +326,9 @@ jobs:
         with:
           name: container-${{ matrix.source }}
           path: containers
-      - name: Prepare Docker image
-        if: ${{ matrix.runtime == 'docker' }}
+      - name: Load image
         run: |
-          docker image rm -f registry.example.com/example/bash:1.0.0 || true
-          skopeo copy oci-archive:containers/bash-${{ matrix.source }}.oci.tar docker-daemon:registry.example.com/example/bash:1.0.0
-      - name: Prepare Podman image
-        if: ${{ matrix.runtime == 'podman' }}
-        run: |
-          podman image rm -f registry.example.com/example/bash:1.0.0 || true
-          skopeo copy oci-archive:containers/bash-${{ matrix.source }}.oci.tar containers-storage:registry.example.com/example/bash:1.0.0
+          docker image rm -f registry.example.com/example/portable-bash:1.0.0 || true
+          skopeo copy oci-archive:containers/portable-bash-${{ matrix.source }}.oci.tar ${{ matrix.storage }}:registry.example.com/example/portable-bash:1.0.0
       - name: Run container test
-        run: ${{ matrix.runtime }} run --rm registry.example.com/example/bash:1.0.0 /opt/bash/bin/bash --version
+        run: ${{ matrix.runtime }} run --rm registry.example.com/example/portable-bash:1.0.0 /opt/portable-bash/bin/bash --version
