@@ -3,3 +3,4 @@ examples/bash-*.sh
 examples/*.oci.tar
 conda-dist/installers
 .conda-dist
+docs/book

@@ -27,13 +27,13 @@ pub struct BundleData {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct BundleMetadata {
-    pub display_name: String,
+    pub summary: String,
+    #[serde(default = "default_author")]
+    pub author: String,
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
     pub release_notes: Option<String>,
-    #[serde(default)]
-    pub success_message: Option<String>,
     #[serde(default)]
     pub featured_packages: Vec<FeaturedPackage>,
 }
@@ -41,10 +41,10 @@ pub struct BundleMetadata {
 impl BundleMetadata {
     fn fallback(environment_name: &str) -> Self {
         Self {
-            display_name: environment_name.to_string(),
+            summary: environment_name.to_string(),
+            author: default_author(),
             description: None,
             release_notes: None,
-            success_message: None,
             featured_packages: Vec::new(),
         }
     }
@@ -57,7 +57,11 @@ pub struct FeaturedPackage {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct LauncherMetadata {
-    pub display_name: String,
+    pub summary: String,
+}
+
+fn default_author() -> String {
+    "unknown".to_string()
 }
 
 const MAGIC_BYTES: &[u8] = b"CONDADIST!";

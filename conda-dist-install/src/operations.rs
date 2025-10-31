@@ -23,9 +23,10 @@ pub async fn install(prefix: &Path, bundle: &BundleData) -> Result<()> {
 
     println!(
         "Installed {project} into {destination}",
-        project = bundle.metadata.display_name,
+        project = bundle.metadata.summary,
         destination = prefix.display()
     );
+    println!("Maintainer: {}", bundle.metadata.author);
     println!(
         "Applied {installs} updates and removed {removals} items (bundle contained {count} components for {platform})",
         installs = installed,
@@ -33,10 +34,6 @@ pub async fn install(prefix: &Path, bundle: &BundleData) -> Result<()> {
         count = record_count,
         platform = bundle.target_platform.as_str()
     );
-
-    if let Some(message) = bundle.metadata.success_message.as_deref() {
-        println!("\n{message}");
-    }
 
     cache_dir
         .close()

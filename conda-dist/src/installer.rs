@@ -24,18 +24,17 @@ const MAGIC_BYTES: &[u8] = b"CONDADIST!";
 
 #[derive(Serialize)]
 struct LauncherMetadata {
-    display_name: String,
+    summary: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BundleMetadataManifest {
-    pub display_name: String,
+    pub summary: String,
+    pub author: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub release_notes: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub success_message: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub featured_packages: Vec<FeaturedPackageManifest>,
 }
@@ -56,17 +55,20 @@ impl PreparedBundleMetadata {
         config: Option<&BundleMetadataConfig>,
         _manifest_dir: &Path,
         records: &[RepoDataRecord],
+        author: &str,
     ) -> Result<Self> {
         let config = config.cloned().unwrap_or_default();
         let BundleMetadataConfig {
-            display_name,
+            summary,
             description,
             release_notes,
-            success_message,
             featured_packages,
         } = config;
 
-        let display_name = display_name.unwrap_or_else(|| environment_name.to_string());
+        let summary = summary.unwrap_or_else(|| environment_name.to_string());
+        let author = author.trim();
+        debug_assert!(!author.is_empty(), "author validated earlier");
+        let author = author.to_string();
 
         let available_names: HashSet<PackageName> = records
             .iter()
@@ -95,10 +97,10 @@ impl PreparedBundleMetadata {
         }
 
         let manifest = BundleMetadataManifest {
-            display_name,
+            summary,
+            author,
             description,
             release_notes,
-            success_message,
             featured_packages: featured,
         };
 
@@ -430,7 +432,7 @@ fn append_regular_file<W: Write>(
 
 fn launcher_metadata_blob(metadata: &PreparedBundleMetadata) -> Result<Vec<u8>> {
     let launcher_metadata = LauncherMetadata {
-        display_name: metadata.manifest.display_name.clone(),
+        summary: metadata.manifest.summary.clone(),
     };
     serde_json::to_vec(&launcher_metadata).context("failed to encode launcher metadata")
 }

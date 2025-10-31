@@ -17,6 +17,7 @@ To package bash, create bash.toml:
 ```toml
 name = "bash"
 version = "1.0.0"
+author = "Example Maintainers"
 channels = ["conda-forge"]
 platforms = ["linux-64"]
 
@@ -34,8 +35,11 @@ conda-dist installer bash.toml
 
 To install the bash application:
 
+Invoke the generated `bash-linux-64` executable and point it at an install
+directory:
+
 ```bash
-bash-linux-64.sh <install dir>
+./bash-linux-64 <install dir>
 <install dir>/bin/bash --version
 ```
 
