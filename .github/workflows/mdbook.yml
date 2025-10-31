@@ -37,11 +37,5 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     steps:
-      - name: Download built book
-        uses: actions/download-artifact@v5
-        with:
-          name: mdbook
-          path: docs/book
-
       - name: Publish to GitHub Pages
         uses: actions/deploy-pages@v4
