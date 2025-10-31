@@ -7,3 +7,4 @@
 - [Output Formats](./output-formats/index.md)
   - [Installers](./output-formats/installer.md)
   - [Container Images](./output-formats/containers.md)
+  - [Native Packages](./output-formats/native-packages.md)

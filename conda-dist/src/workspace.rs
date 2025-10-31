@@ -42,4 +42,8 @@ impl Workspace {
     pub fn lockfile_path(&self) -> PathBuf {
         self.root.join(LOCKFILE_NAME)
     }
+
+    pub fn native_packaging_dir(&self) -> PathBuf {
+        self.root.join("native-packaging")
+    }
 }

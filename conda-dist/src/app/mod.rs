@@ -2,6 +2,8 @@ pub mod container;
 pub mod context;
 pub mod environment;
 pub mod installer;
+mod package;
+mod runtime;
 
 use anyhow::Result;
 
@@ -12,5 +14,6 @@ pub async fn execute(cli: Cli) -> Result<()> {
     match command {
         Command::Installer(args) => installer::execute(args, work_dir.clone()).await,
         Command::Container(args) => container::execute(args, work_dir).await,
+        Command::Package(args) => package::execute(args, work_dir).await,
     }
 }

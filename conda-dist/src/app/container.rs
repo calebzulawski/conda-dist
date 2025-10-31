@@ -18,6 +18,7 @@ use crate::{
 use super::{
     context::{ManifestContext, load_manifest_context},
     environment::{EnvironmentPreparation, prepare_environment},
+    runtime::{self, RuntimeBinary, RuntimeEngine},
 };
 
 pub async fn execute(args: ContainerArgs, work_dir: Option<PathBuf>) -> Result<()> {
@@ -36,9 +37,9 @@ pub async fn execute(args: ContainerArgs, work_dir: Option<PathBuf>) -> Result<(
     let target_platforms = resolve_target_platforms(&manifest_ctx, platform.as_deref())?;
     ensure_linux_platforms(&target_platforms)?;
 
-    let (engine_path, engine) = resolve_runtime(engine)?;
+    let runtime_binary = runtime::resolve_runtime(engine)?;
     let image_tag = derive_image_tag(&manifest_ctx, &container_cfg)?;
-    let runtime = RuntimeConfig::new(engine_path, engine, image_tag);
+    let runtime = RuntimeConfig::new(runtime_binary, image_tag);
 
     let progress = Progress::stdout();
     let mut final_messages = Vec::new();
@@ -174,75 +175,24 @@ fn is_linux_platform(platform: Platform) -> bool {
     platform.as_str().starts_with("linux-")
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RuntimeEngine {
-    Docker,
-    Podman,
-}
-
 #[derive(Debug, Clone)]
 struct RuntimeConfig {
-    binary: PathBuf,
-    engine: RuntimeEngine,
+    binary: RuntimeBinary,
     tag: String,
 }
 
 impl RuntimeConfig {
-    fn new(binary: PathBuf, engine: RuntimeEngine, tag: String) -> Self {
-        Self {
-            binary,
-            engine,
-            tag,
-        }
+    fn new(binary: RuntimeBinary, tag: String) -> Self {
+        Self { binary, tag }
     }
 
     fn binary(&self) -> &Path {
-        &self.binary
+        self.binary.binary()
     }
 
     fn engine(&self) -> RuntimeEngine {
-        self.engine
+        self.binary.engine()
     }
-}
-
-fn resolve_runtime(engine: Option<PathBuf>) -> Result<(PathBuf, RuntimeEngine)> {
-    if let Some(explicit) = engine {
-        match detect_runtime_engine(&explicit) {
-            Some(kind) => return Ok((explicit, kind)),
-            None => bail!(
-                "unable to determine engine type for {} (expected docker or podman binary)",
-                explicit.display()
-            ),
-        }
-    }
-
-    if let Some(path) = find_in_path("docker") {
-        return Ok((path, RuntimeEngine::Docker));
-    }
-
-    if let Some(path) = find_in_path("podman") {
-        return Ok((path, RuntimeEngine::Podman));
-    }
-
-    bail!("no container engine found; install docker or podman, or supply --engine <path>");
-}
-
-fn detect_runtime_engine(path: &Path) -> Option<RuntimeEngine> {
-    let name = path.file_name()?.to_str()?.to_lowercase();
-    if name.contains("docker") {
-        Some(RuntimeEngine::Docker)
-    } else if name.contains("podman") {
-        Some(RuntimeEngine::Podman)
-    } else {
-        None
-    }
-}
-
-fn find_in_path(binary: &str) -> Option<PathBuf> {
-    let path_var = env::var_os("PATH")?;
-    env::split_paths(&path_var)
-        .map(|dir| dir.join(binary))
-        .find(|candidate| candidate.is_file())
 }
 
 fn derive_image_tag(
@@ -552,7 +502,7 @@ async fn build_with_docker(
     let output_spec = format!("type=oci,dest={}", output_path.to_string_lossy());
     cmd.arg("--output").arg(output_spec);
 
-    run_command(&mut cmd, "image build").await
+    runtime::run_command(&mut cmd, "image build").await
 }
 
 async fn build_with_podman(
@@ -578,7 +528,7 @@ async fn build_with_podman(
         .arg(dockerfile_path)
         .arg(context_path);
 
-    run_command(&mut cmd, "podman build").await?;
+    runtime::run_command(&mut cmd, "podman build").await?;
     podman_save_image(runtime, output_path).await
 }
 
@@ -611,73 +561,23 @@ async fn podman_save_image(runtime: &RuntimeConfig, output_path: &Path) -> Resul
         .arg(&runtime.tag)
         .arg(&archive_spec);
 
-    run_command(&mut cmd, "podman manifest push").await
+    runtime::run_command(&mut cmd, "podman manifest push").await
 }
 
 async fn podman_manifest_remove(runtime: &RuntimeConfig) -> Result<()> {
     let mut cmd = Command::new(runtime.binary());
     cmd.arg("manifest").arg("rm").arg(&runtime.tag);
 
-    run_command(&mut cmd, "podman manifest rm").await.ok();
+    runtime::run_command(&mut cmd, "podman manifest rm")
+        .await
+        .ok();
     Ok(())
 }
 
 fn format_platform_list(platforms: &[Platform]) -> String {
-    let mut names: Vec<&str> = platforms.iter().map(|p| p.as_str()).collect();
-    names.sort_unstable();
-    names.join(", ")
+    runtime::format_platform_list(platforms)
 }
 
 fn platform_to_runtime_spec(platform: Platform) -> Result<&'static str> {
-    match platform {
-        Platform::Linux64 => Ok("linux/amd64"),
-        Platform::LinuxAarch64 => Ok("linux/arm64/v8"),
-        Platform::LinuxPpc64le => Ok("linux/ppc64le"),
-        Platform::LinuxS390X => Ok("linux/s390x"),
-        Platform::Linux32 => Ok("linux/386"),
-        Platform::LinuxArmV7l => Ok("linux/arm/v7"),
-        other => bail!(
-            "unsupported platform '{}' for container builds",
-            other.as_str()
-        ),
-    }
-}
-
-async fn run_command(cmd: &mut Command, action: &str) -> Result<()> {
-    let display = {
-        let std_cmd = cmd.as_std();
-        let program = std_cmd.get_program().to_string_lossy().into_owned();
-        let args = std_cmd
-            .get_args()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        if args.is_empty() {
-            program
-        } else {
-            format!("{} {}", program, args.join(" "))
-        }
-    };
-    let output = cmd
-        .output()
-        .await
-        .with_context(|| format!("failed to execute {} command", action))?;
-
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        bail!(
-            "{} failed (exit code {}):\ncommand: {}\n{}\n{}",
-            action,
-            output
-                .status
-                .code()
-                .map(|code| code.to_string())
-                .unwrap_or_else(|| "signal".to_string()),
-            display,
-            stdout,
-            stderr
-        )
-    }
+    runtime::platform_to_runtime_spec(platform)
 }
