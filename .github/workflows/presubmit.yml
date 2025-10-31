@@ -21,7 +21,7 @@ jobs:
             cargo: cargo
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Rust cache
@@ -44,7 +44,7 @@ jobs:
             cargo: cargo
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -88,7 +88,7 @@ jobs:
             platform: osx-arm64
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -101,7 +101,7 @@ jobs:
         run: cargo install cross --git https://github.com/cross-rs/cross --locked
         if: ${{ matrix.cargo == 'cross' }}
       - name: Download bootstrapped installers
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           pattern: bootstrap-installers-*
           path: conda-dist/installers
@@ -132,9 +132,9 @@ jobs:
             platform: osx-64
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Download conda-dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: conda-dist-${{ matrix.platform }}
           path: release
@@ -163,9 +163,9 @@ jobs:
     container: ${{ matrix.container || null }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Download conda-dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: conda-dist-linux-64
           path: release
@@ -215,7 +215,7 @@ jobs:
           - osx-64
     steps:
       - name: Download installers
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: installers-built-on-${{ matrix.from }}
       - name: Run installer
@@ -256,7 +256,7 @@ jobs:
         if: ${{ matrix.runtime == 'podman' }}
         run: dnf -y install skopeo
       - name: Download container image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: container-${{ matrix.source }}
           path: containers
