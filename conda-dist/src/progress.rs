@@ -35,8 +35,19 @@ impl Step {
         Self { bar, label }
     }
 
-    pub fn clone_bar(&self) -> ProgressBar {
-        self.bar.clone()
+    pub async fn run_with<F, Fut, T, S>(
+        &self,
+        steady_tick: Option<Duration>,
+        task: F,
+        success_message: S,
+    ) -> Result<T>
+    where
+        F: FnOnce(StepHandle) -> Fut,
+        Fut: Future<Output = Result<T>>,
+        S: FnOnce(&T) -> String,
+    {
+        let handle = StepHandle::new(self.bar.clone(), self.label.clone());
+        self.run(steady_tick, task(handle), success_message).await
     }
 
     fn start(&self, steady_tick: Option<Duration>) {
@@ -83,5 +94,59 @@ impl Step {
                 Err(err)
             }
         }
+    }
+}
+
+pub struct StepHandle {
+    bar: ProgressBar,
+    label: String,
+}
+
+impl StepHandle {
+    fn new(bar: ProgressBar, label: String) -> Self {
+        Self { bar, label }
+    }
+
+    pub fn counter(&self, total: usize) -> ProgressCounter {
+        ProgressCounter::new(self.bar.clone(), self.label.clone(), total)
+    }
+
+    pub fn progress_bar(&self) -> ProgressBar {
+        self.bar.clone()
+    }
+}
+
+pub struct ProgressCounter {
+    bar: ProgressBar,
+    label: String,
+    total: usize,
+    current: usize,
+}
+
+impl ProgressCounter {
+    fn new(bar: ProgressBar, label: String, total: usize) -> Self {
+        let counter = Self {
+            bar,
+            label,
+            total,
+            current: 0,
+        };
+        counter.update();
+        counter
+    }
+
+    pub fn set(&mut self, value: usize) {
+        self.current = value.min(self.total);
+        self.update();
+    }
+
+    pub fn finish(&mut self) {
+        self.set(self.total);
+    }
+
+    fn update(&self) {
+        self.bar
+            .set_message(format!("{} ({}/{})", self.label, self.current, self.total));
+        self.bar.tick();
     }
 }

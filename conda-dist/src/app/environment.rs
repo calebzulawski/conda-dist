@@ -89,17 +89,15 @@ pub async fn prepare_environment(
     let virtual_package_config = manifest_ctx.config.virtual_packages();
     let total_platforms = target_platforms.len();
     let solve_step = progress.step("Solve environment");
-    let solve_bar = solve_step.clone_bar();
     let target_platforms_for_solve = target_platforms.clone();
     let channels_for_solve = channels;
     let specs_for_solve = specs;
     let locked_by_subdir_for_solve = locked_by_subdir;
     let solved_records = solve_step
-        .run(
+        .run_with(
             Some(Duration::from_millis(120)),
-            async move {
-                solve_bar.set_message(format!("Solve environment (0/{total_platforms})"));
-                solve_bar.tick();
+            move |handle| async move {
+                let mut counter = handle.counter(total_platforms);
 
                 let mut combined = Vec::new();
                 let mut seen: HashSet<(String, String)> = HashSet::new();
@@ -145,9 +143,7 @@ pub async fn prepare_environment(
                         }
                     }
 
-                    let done = index + 1;
-                    solve_bar.set_message(format!("Solve environment ({done}/{total_platforms})"));
-                    solve_bar.tick();
+                    counter.set(index + 1);
                 }
 
                 Ok(combined)
@@ -167,16 +163,28 @@ pub async fn prepare_environment(
     let package_cache_dir = workspace.package_cache_dir();
 
     let download_step = progress.step("Download packages");
-    let download_bar = download_step.clone_bar();
+    let solved_records_for_download = solved_records.clone();
+    let channel_dir_for_download = channel_dir.clone();
     let download_summary = download_step
-        .run(
+        .run_with(
             None,
-            downloader::download_and_stage_packages(
-                &solved_records,
-                &channel_dir,
-                &package_cache_dir,
-                &download_bar,
-            ),
+            {
+                let package_cache_dir = package_cache_dir;
+                move |handle| {
+                    let progress_bar = handle.progress_bar();
+                    let solved_records = solved_records_for_download.clone();
+                    let channel_dir = channel_dir_for_download.clone();
+                    async move {
+                        downloader::download_and_stage_packages(
+                            &solved_records,
+                            &channel_dir,
+                            &package_cache_dir,
+                            &progress_bar,
+                        )
+                        .await
+                    }
+                }
+            },
             |summary| {
                 format!(
                     "Download packages ({}/{})",

@@ -6,12 +6,14 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use indicatif::ProgressBar;
 use rattler_conda_types::Platform;
 use tokio::process::Command;
 
 use crate::{
-    cli::ContainerArgs, config::ContainerConfig, installer, progress::Progress,
+    cli::ContainerArgs,
+    config::ContainerConfig,
+    installer,
+    progress::{Progress, ProgressCounter},
     workspace::Workspace,
 };
 
@@ -70,14 +72,18 @@ pub async fn execute(args: ContainerArgs, work_dir: Option<PathBuf>) -> Result<(
 
     let installer_label = format!("Prepare installer bundle [{}]", platform_summary);
     let installer_step = progress.step(installer_label.clone());
-    let installer_bar = installer_step.clone_bar();
     let prep_ref = &prep;
     let installer_platforms = target_platforms.clone();
+    let total_installers = installer_platforms.len();
     let installers = installer_step
-        .run(
+        .run_with(
             Some(Duration::from_millis(120)),
-            async move {
-                prepare_self_extracting_installers(&installer_bar, prep_ref, &installer_platforms)
+            {
+                let installer_platforms = installer_platforms;
+                move |handle| async move {
+                    let mut counter = handle.counter(total_installers);
+                    prepare_self_extracting_installers(&mut counter, prep_ref, &installer_platforms)
+                }
             },
             move |_| installer_label.clone(),
         )
@@ -234,7 +240,7 @@ fn derive_image_tag(
 }
 
 fn prepare_self_extracting_installers(
-    progress: &ProgressBar,
+    progress: &mut ProgressCounter,
     prep: &EnvironmentPreparation,
     platforms: &[Platform],
 ) -> Result<Vec<(Platform, PathBuf)>> {

@@ -44,21 +44,21 @@ pub async fn execute(args: InstallerArgs, work_dir: Option<PathBuf>) -> Result<(
 
     let total_installers = installer_platforms.len();
     let installer_step = progress.step("Create installers");
-    let installer_bar = installer_step.clone_bar();
     let script_path_ref = &script_path;
     let prep_ref = &prep;
     let installer_platforms_ref = &installer_platforms;
     let written_paths = installer_step
-        .run(
+        .run_with(
             Some(Duration::from_millis(120)),
-            async move {
+            move |handle| async move {
+                let mut counter = handle.counter(total_installers);
                 installer::create_installers(
                     script_path_ref,
                     &prep_ref.environment_name,
                     &prep_ref.channel_dir,
                     installer_platforms_ref,
                     &prep_ref.bundle_metadata,
-                    &installer_bar,
+                    &mut counter,
                 )
             },
             move |paths| format!("Create installers ({}/{total_installers})", paths.len()),

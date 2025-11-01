@@ -203,7 +203,6 @@ pub async fn execute(args: PackageArgs, work_dir: Option<PathBuf>) -> Result<()>
     let installer_summary = runtime::format_platform_list(&installer_platforms);
     let installer_label = format!("Prepare installer bundle [{}]", installer_summary);
     let installer_step = progress.step(installer_label.clone());
-    let installer_bar = installer_step.clone_bar();
     let installer_dir = prep.staging_dir.path().join("installers");
     fs::create_dir_all(&installer_dir).with_context(|| {
         format!(
@@ -212,19 +211,25 @@ pub async fn execute(args: PackageArgs, work_dir: Option<PathBuf>) -> Result<()>
         )
     })?;
     let prep_ref = &prep;
-    let installer_platforms_ref = installer_platforms.clone();
+    let installer_platforms_for_task = installer_platforms.clone();
+    let total_installers = installer_platforms_for_task.len();
     let installer_paths = installer_step
-        .run(
+        .run_with(
             Some(Duration::from_millis(120)),
-            async move {
-                installer::create_installers(
-                    &installer_dir,
-                    &prep_ref.environment_name,
-                    &prep_ref.channel_dir,
-                    &installer_platforms_ref,
-                    &prep_ref.bundle_metadata,
-                    &installer_bar,
-                )
+            {
+                let installer_dir = installer_dir;
+                let installer_platforms_for_task = installer_platforms_for_task;
+                move |handle| async move {
+                    let mut counter = handle.counter(total_installers);
+                    installer::create_installers(
+                        &installer_dir,
+                        &prep_ref.environment_name,
+                        &prep_ref.channel_dir,
+                        &installer_platforms_for_task,
+                        &prep_ref.bundle_metadata,
+                        &mut counter,
+                    )
+                }
             },
             move |_| installer_label.clone(),
         )
@@ -413,25 +418,20 @@ pub async fn execute(args: PackageArgs, work_dir: Option<PathBuf>) -> Result<()>
     }
 
     let packaging_step = progress.step("Build native packages");
-    let packaging_bar = packaging_step.clone_bar();
     let runtime_clone = runtime.clone();
     let metadata_clone = metadata.clone();
 
     let results = packaging_step
-        .run(
+        .run_with(
             Some(Duration::from_millis(120)),
-            async move {
-                packaging_bar.set_message(format!("Build native packages (0/{job_count})"));
-                packaging_bar.tick();
+            move |handle| async move {
+                let mut counter = handle.counter(job_count);
 
                 let mut produced = Vec::new();
                 for (index, job) in jobs.into_iter().enumerate() {
                     let result = run_package_job(&runtime_clone, &metadata_clone, job).await?;
                     produced.push(result);
-                    let done = index + 1;
-                    packaging_bar
-                        .set_message(format!("Build native packages ({done}/{job_count})"));
-                    packaging_bar.tick();
+                    counter.set(index + 1);
                 }
 
                 Ok(produced)
