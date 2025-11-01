@@ -13,9 +13,7 @@ use rattler_conda_types::{PackageName, Platform, RepoDataRecord};
 use serde::Serialize;
 use tar::{Builder, EntryType, Header, HeaderMode};
 
-use indicatif::ProgressBar;
-
-use crate::{conda::LOCKFILE_NAME, config::BundleMetadataConfig};
+use crate::{conda::LOCKFILE_NAME, config::BundleMetadataConfig, progress::ProgressCounter};
 
 include!(concat!(env!("OUT_DIR"), "/installers.rs"));
 
@@ -203,7 +201,7 @@ pub fn create_installers(
     channel_dir: &Path,
     selected_platforms: &[Platform],
     metadata: &PreparedBundleMetadata,
-    progress: &ProgressBar,
+    progress: &mut ProgressCounter,
 ) -> Result<Vec<PathBuf>> {
     let (output_dir, name_prefix) = installer_output_spec(script_path, environment_name)?;
 
@@ -233,13 +231,9 @@ pub fn create_installers(
 
     let total = selected_platforms.len();
     if total == 0 {
-        progress.set_message("Create installers (0/0)");
-        progress.tick();
+        progress.finish();
         return Ok(Vec::new());
     }
-
-    progress.set_message(format!("Create installers (0/{total})"));
-    progress.tick();
 
     let mut written = Vec::new();
     let metadata_blob = launcher_metadata_blob(metadata)?;
@@ -276,9 +270,7 @@ pub fn create_installers(
         .with_context(|| format!("failed to write installer {}", target_path.display()))?;
         written.push(target_path);
 
-        let done = index + 1;
-        progress.set_message(format!("Create installers ({done}/{total})"));
-        progress.tick();
+        progress.set(index + 1);
     }
 
     Ok(written)
