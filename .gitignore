@@ -1,7 +1,7 @@
 target/
 examples/bash-*.sh
 examples/*.oci.tar
-examples/bash-packages
+examples/portable-bash-packages
 conda-dist/installers
 .conda-dist
 docs/book

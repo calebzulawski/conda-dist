@@ -17,6 +17,6 @@ target platform and container image used.
 ## Characteristics
 
 - **Output**: RPM/DEB archives organised per platform and image.
-- **Platforms**: Linux targets listed in the manifest.
+- **Platforms**: Supports all Linux targets listed in the manifest.
 - **Images**: Works with docker/podman-compatible distribution images.
-- **Workflow**: Reuses the resolved environment from the packaging step.
+- **Runtime dependencies**: None required on the target host.
