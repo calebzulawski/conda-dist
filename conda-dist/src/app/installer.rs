@@ -4,7 +4,9 @@ use anyhow::{Result, bail};
 
 use crate::{cli::InstallerArgs, conda, installer, progress::Progress, workspace::Workspace};
 
-use super::{context::load_manifest_context, environment::prepare_environment};
+use super::{
+    context::load_manifest_context, environment::prepare_environment, push_download_summary,
+};
 
 pub async fn execute(args: InstallerArgs, work_dir: Option<PathBuf>) -> Result<()> {
     let InstallerArgs {
@@ -65,24 +67,7 @@ pub async fn execute(args: InstallerArgs, work_dir: Option<PathBuf>) -> Result<(
         )
         .await?;
 
-    if download_summary.fetched_packages == 0 {
-        final_messages.push("No packages required downloading.".to_string());
-    } else {
-        let reused = download_summary
-            .total_packages
-            .saturating_sub(download_summary.fetched_packages);
-        if reused > 0 {
-            final_messages.push(format!(
-                "Downloaded {} packages (reused {}).",
-                download_summary.fetched_packages, reused
-            ));
-        } else {
-            final_messages.push(format!(
-                "Downloaded {} packages.",
-                download_summary.fetched_packages
-            ));
-        }
-    }
+    push_download_summary(&mut final_messages, &download_summary);
 
     if !written_paths.is_empty() {
         final_messages.push("Installer outputs:".to_string());

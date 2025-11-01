@@ -19,6 +19,7 @@ use crate::{cli::PackageArgs, conda, installer, progress::Progress, workspace::W
 use super::{
     context::{ManifestContext, load_manifest_context},
     environment::{EnvironmentPreparation, prepare_environment},
+    push_download_summary,
     runtime::{self, RuntimeBinary, RuntimeEngine},
 };
 
@@ -366,49 +367,29 @@ pub async fn execute(args: PackageArgs, work_dir: Option<PathBuf>) -> Result<()>
             })?;
 
         if let Some(script_path) = rpm_script.as_ref() {
-            let arch = rpm_arch(*platform)?;
-            for image in &rpm_images {
-                let subdir = sanitize_image_label(image);
-                let dir = output_root
-                    .join(PackageFormat::Rpm.subdir())
-                    .join(platform.as_str())
-                    .join(subdir);
-                fs::create_dir_all(&dir).with_context(|| {
-                    format!("failed to prepare RPM output directory {}", dir.display())
-                })?;
-                jobs.push(PackageJob {
-                    format: PackageFormat::Rpm,
-                    image: image.clone(),
-                    platform: *platform,
-                    installer_path: installer_path.clone(),
-                    script_path: script_path.clone(),
-                    output_dir: dir,
-                    arch: arch.to_string(),
-                });
-            }
+            enqueue_package_jobs(
+                PackageFormat::Rpm,
+                *platform,
+                &installer_path,
+                script_path,
+                &rpm_images,
+                &output_root,
+                &mut jobs,
+                |plat| rpm_arch(plat).map(|value| value.to_string()),
+            )?;
         }
 
         if let Some(script_path) = deb_script.as_ref() {
-            let arch = deb_arch(*platform)?;
-            for image in &deb_images {
-                let subdir = sanitize_image_label(image);
-                let dir = output_root
-                    .join(PackageFormat::Deb.subdir())
-                    .join(platform.as_str())
-                    .join(subdir);
-                fs::create_dir_all(&dir).with_context(|| {
-                    format!("failed to prepare DEB output directory {}", dir.display())
-                })?;
-                jobs.push(PackageJob {
-                    format: PackageFormat::Deb,
-                    image: image.clone(),
-                    platform: *platform,
-                    installer_path: installer_path.clone(),
-                    script_path: script_path.clone(),
-                    output_dir: dir,
-                    arch: arch.to_string(),
-                });
-            }
+            enqueue_package_jobs(
+                PackageFormat::Deb,
+                *platform,
+                &installer_path,
+                script_path,
+                &deb_images,
+                &output_root,
+                &mut jobs,
+                |plat| deb_arch(plat).map(|value| value.to_string()),
+            )?;
         }
     }
 
@@ -440,24 +421,7 @@ pub async fn execute(args: PackageArgs, work_dir: Option<PathBuf>) -> Result<()>
         )
         .await?;
 
-    if download_summary.fetched_packages == 0 {
-        final_messages.push("No packages required downloading.".to_string());
-    } else {
-        let reused = download_summary
-            .total_packages
-            .saturating_sub(download_summary.fetched_packages);
-        if reused > 0 {
-            final_messages.push(format!(
-                "Downloaded {} packages (reused {}).",
-                download_summary.fetched_packages, reused
-            ));
-        } else {
-            final_messages.push(format!(
-                "Downloaded {} packages.",
-                download_summary.fetched_packages
-            ));
-        }
-    }
+    push_download_summary(&mut final_messages, &download_summary);
 
     let rpm_count = results
         .iter()
@@ -752,6 +716,46 @@ fn sanitize_image_label(image: &str) -> String {
     } else {
         trimmed.to_string()
     }
+}
+
+fn enqueue_package_jobs<F>(
+    format: PackageFormat,
+    platform: Platform,
+    installer_path: &Path,
+    script_path: &Path,
+    images: &[String],
+    output_root: &Path,
+    jobs: &mut Vec<PackageJob>,
+    arch_resolver: F,
+) -> Result<()>
+where
+    F: Fn(Platform) -> Result<String>,
+{
+    let arch = arch_resolver(platform)?;
+    for image in images {
+        let subdir = sanitize_image_label(image);
+        let dir = output_root
+            .join(format.subdir())
+            .join(platform.as_str())
+            .join(subdir);
+        fs::create_dir_all(&dir).with_context(|| {
+            format!(
+                "failed to prepare {} output directory {}",
+                format.label().to_ascii_uppercase(),
+                dir.display()
+            )
+        })?;
+        jobs.push(PackageJob {
+            format,
+            image: image.clone(),
+            platform,
+            installer_path: installer_path.to_path_buf(),
+            script_path: script_path.to_path_buf(),
+            output_dir: dir,
+            arch: arch.clone(),
+        });
+    }
+    Ok(())
 }
 
 fn ensure_linux_package_platform(platform: Platform) -> Result<()> {
