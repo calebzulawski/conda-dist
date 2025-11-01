@@ -1,4 +1,4 @@
-name = "bash"
+name = "portable-bash"
 version = "1.0.0"
 author = "Example Maintainers"
 channels = ["conda-forge"]
@@ -11,11 +11,8 @@ tag_template = "registry.example.com/example/{name}:{version}"
 bash = "*"
 
 [metadata]
-summary = "Portable Bash Environment"
-description = """
-Ships a self-contained GNU bash shell for linux-64 systems. Useful for quick scripting on hosts 
-that do not provide a recent bash runtime by default.
-"""
+summary = "Portable Bash"
+description = "A self-contained Bash shell"
 release_notes = """
 - Initial portable release of the bash environment.
 - Includes GNU bash and its runtime dependencies from conda-forge.

@@ -8,5 +8,6 @@ packaging.
   platform.
 - **Container images** — stage the environment into a minimal base and output
   an OCI archive.
+- **Native packages** — produce RPM and DEB artifacts for Linux distributions.
 
 Subsequent sections describe the behaviour and outputs of each format.

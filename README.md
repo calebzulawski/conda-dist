@@ -57,6 +57,18 @@ The generated image contains just the bash application:
 docker run bash:1.0.0 bash -c "echo hello"
 ```
 
+### Native Packages
+
+To create native RPM and DEB artifacts, run:
+
+```bash
+conda-dist package bash.toml \
+  --rpm-image rockylinux:9 \
+  --deb-image ubuntu:22.04
+```
+
+Artifacts are written beneath `bash-packages/<format>/<platform>/<image>/…`.
+
 ## License
 
 conda-dist is licensed under the Apache License, Version 2.0.

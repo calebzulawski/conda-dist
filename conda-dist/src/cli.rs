@@ -21,6 +21,8 @@ pub enum Command {
     Installer(InstallerArgs),
     /// Build container images embedding the environment
     Container(ContainerArgs),
+    /// Build native system packages (rpm/deb) using containerized installers
+    Package(PackageArgs),
 }
 
 #[derive(Debug, Args)]
@@ -67,6 +69,37 @@ pub struct ContainerArgs {
     /// Path to write the resulting OCI archive (defaults to <manifest-dir>/<name>-container.oci.tar)
     #[arg(long = "oci-output", value_name = "PATH")]
     pub oci_output: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct PackageArgs {
+    /// Path to the conda-dist manifest (conda-dist.toml)
+    #[arg(value_name = "MANIFEST", default_value = "conda-dist.toml")]
+    pub manifest: PathBuf,
+
+    /// Regenerate the lockfile instead of reusing any cached version
+    #[arg(long = "unlock")]
+    pub unlock: bool,
+
+    /// Path to the container engine binary (defaults to docker, then podman)
+    #[arg(long = "engine", value_name = "PATH")]
+    pub engine: Option<PathBuf>,
+
+    /// Build RPM packages using the specified container image (repeatable)
+    #[arg(long = "rpm-image", value_name = "IMAGE")]
+    pub rpm_images: Vec<String>,
+
+    /// Build DEB packages using the specified container image (repeatable)
+    #[arg(long = "deb-image", value_name = "IMAGE")]
+    pub deb_images: Vec<String>,
+
+    /// Restrict native packaging to specific target platform(s) (defaults to host platform)
+    #[arg(long = "platform", value_name = "PLATFORM")]
+    pub platform: Vec<String>,
+
+    /// Output directory for generated packages (defaults to <manifest-dir>/<name>-packages)
+    #[arg(long = "output", value_name = "PATH")]
+    pub output: Option<PathBuf>,
 }
 
 pub fn parse() -> Cli {
