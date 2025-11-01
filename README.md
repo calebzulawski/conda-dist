@@ -10,6 +10,8 @@ Use it to:
 * Build reproducible Docker images for CI/CD
 * Simplify application deployments
 
+For a complete reference, see the [manual](https://calebzulawski.github.io/conda-dist).
+
 ## Example
 
 To package bash, create bash.toml:
@@ -66,8 +68,6 @@ conda-dist package bash.toml \
   --rpm-image rockylinux:9 \
   --deb-image ubuntu:22.04
 ```
-
-Artifacts are written beneath `bash-packages/<format>/<platform>/<image>/…`.
 
 ## License
 
