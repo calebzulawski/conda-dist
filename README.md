@@ -69,6 +69,20 @@ conda-dist package bash.toml \
   --deb-image ubuntu:22.04
 ```
 
+### Lockfile Maintenance
+
+To refresh the manifest lockfile without producing artifacts, run:
+
+```bash
+conda-dist lock bash.toml
+```
+
+Use the global `--locked` flag to assert the lockfile is current:
+
+```bash
+conda-dist --locked lock bash.toml
+```
+
 ## License
 
 conda-dist is licensed under the Apache License, Version 2.0.

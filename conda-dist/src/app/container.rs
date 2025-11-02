@@ -18,17 +18,21 @@ use crate::{
 };
 
 use super::{
+    LockMode,
     context::{ManifestContext, load_manifest_context},
     environment::{EnvironmentPreparation, prepare_environment},
     runtime::{self, RuntimeBinary, RuntimeEngine},
 };
 
-pub async fn execute(args: ContainerArgs, work_dir: Option<PathBuf>) -> Result<()> {
+pub async fn execute(
+    args: ContainerArgs,
+    work_dir: Option<PathBuf>,
+    lock_mode: LockMode,
+) -> Result<()> {
     let ContainerArgs {
         manifest,
         platform,
         engine,
-        unlock,
         oci_output,
     } = args;
 
@@ -46,11 +50,11 @@ pub async fn execute(args: ContainerArgs, work_dir: Option<PathBuf>) -> Result<(
     let progress = Progress::stdout();
     let mut final_messages = Vec::new();
 
-    let (prep, _) = prepare_environment(
+    let (prep, _, _) = prepare_environment(
         &manifest_ctx,
         &workspace,
         target_platforms.clone(),
-        unlock,
+        lock_mode,
         &progress,
     )
     .await?;

@@ -17,6 +17,7 @@ use std::os::unix::fs::PermissionsExt;
 use crate::{cli::PackageArgs, conda, installer, progress::Progress, workspace::Workspace};
 
 use super::{
+    LockMode,
     context::{ManifestContext, load_manifest_context},
     environment::{EnvironmentPreparation, prepare_environment},
     push_download_summary,
@@ -130,10 +131,13 @@ impl PackageMetadata {
     }
 }
 
-pub async fn execute(args: PackageArgs, work_dir: Option<PathBuf>) -> Result<()> {
+pub async fn execute(
+    args: PackageArgs,
+    work_dir: Option<PathBuf>,
+    lock_mode: LockMode,
+) -> Result<()> {
     let PackageArgs {
         manifest,
-        unlock,
         engine,
         rpm_images,
         deb_images,
@@ -187,11 +191,11 @@ pub async fn execute(args: PackageArgs, work_dir: Option<PathBuf>) -> Result<()>
     let progress = Progress::stdout();
     let mut final_messages = Vec::new();
 
-    let (prep, download_summary) = prepare_environment(
+    let (prep, download_summary, _) = prepare_environment(
         &manifest_ctx,
         &workspace,
         requested_platforms.clone(),
-        unlock,
+        lock_mode,
         &progress,
     )
     .await?;

@@ -5,15 +5,19 @@ use anyhow::{Result, bail};
 use crate::{cli::InstallerArgs, conda, installer, progress::Progress, workspace::Workspace};
 
 use super::{
-    context::load_manifest_context, environment::prepare_environment, push_download_summary,
+    LockMode, context::load_manifest_context, environment::prepare_environment,
+    push_download_summary,
 };
 
-pub async fn execute(args: InstallerArgs, work_dir: Option<PathBuf>) -> Result<()> {
+pub async fn execute(
+    args: InstallerArgs,
+    work_dir: Option<PathBuf>,
+    lock_mode: LockMode,
+) -> Result<()> {
     let InstallerArgs {
         manifest,
         output,
         installer_platform,
-        unlock,
     } = args;
 
     let manifest_ctx = load_manifest_context(manifest)?;
@@ -32,11 +36,11 @@ pub async fn execute(args: InstallerArgs, work_dir: Option<PathBuf>) -> Result<(
     let progress = Progress::stdout();
     let mut final_messages = Vec::new();
 
-    let (prep, download_summary) = prepare_environment(
+    let (prep, download_summary, _) = prepare_environment(
         &manifest_ctx,
         &workspace,
         target_platforms,
-        unlock,
+        lock_mode,
         &progress,
     )
     .await?;
