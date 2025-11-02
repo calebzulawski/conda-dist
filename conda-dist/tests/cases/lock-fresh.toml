@@ -1,0 +1,8 @@
+bin.name = "conda-dist"
+args = ["--locked", "lock", "portable-bash.toml"]
+status.code = 0
+stdout = "Lockfile at [CWD]/portable-bash.lock already up to date.\n"
+stderr = ""
+
+[fs]
+cwd = "../fixtures/lock-fresh"

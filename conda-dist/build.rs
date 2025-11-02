@@ -24,6 +24,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             .file_name()
             .into_string()
             .map_err(|_| "installer file name is not valid UTF-8")?;
+        if name == ".gitkeep" {
+            continue;
+        }
         entries.push((name, path));
     }
 

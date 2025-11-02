@@ -1,4 +1,4 @@
-name = "bash"
+name = "portable-bash"
 version = "1.0.0"
 author = "Example Maintainers"
 channels = ["conda-forge"]
@@ -6,3 +6,4 @@ platforms = ["linux-64"]
 
 [dependencies]
 bash = "*"
+coreutils = "*"

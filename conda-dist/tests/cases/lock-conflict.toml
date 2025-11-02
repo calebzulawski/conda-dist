@@ -1,0 +1,7 @@
+bin.name = "conda-dist"
+args = ["--locked", "--unlock", "lock", "portable-bash.toml"]
+status.code = 2
+stderr = "error: the argument '--locked' cannot be used with '--unlock'\n...\n"
+
+[fs]
+cwd = "../fixtures/lock-missing"

@@ -1,0 +1,17 @@
+version: 6
+environments:
+  portable-bash:
+    channels:
+    - url: file:./
+    - url: https://example.com/conda/
+    packages:
+      linux-64:
+      - conda: https://example.com/dummy-1.0.0-0.tar.bz2
+packages:
+- conda: https://example.com/dummy-1.0.0-0.tar.bz2
+  subdir: linux-64
+  sha256: b72bd1c9d03474890147ecf588c49687b797d7ab4b79ce4cb5ab02b5a7a5d93d
+  md5: b54070e24fc2b5478bbcd344f27b06b6
+  license: Proprietary
+  size: 182
+  timestamp: 0

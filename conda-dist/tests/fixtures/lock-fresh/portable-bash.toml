@@ -1,0 +1,8 @@
+name = "portable-bash"
+version = "1.0.0"
+author = "Example Maintainers"
+channels = ["https://example.com/conda"]
+platforms = ["linux-64"]
+
+[dependencies]
+dummy = "==1.0.0"
