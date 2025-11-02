@@ -86,7 +86,7 @@ pub async fn execute(
     drop(progress);
 
     for message in final_messages {
-        println!("{}", message);
+        println!("{message}");
     }
 
     Ok(())

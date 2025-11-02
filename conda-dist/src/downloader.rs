@@ -50,7 +50,7 @@ pub async fn download_and_stage_packages(
                 subdir: key.0,
                 file_name: key.1,
                 url: record.url.to_string(),
-                sha256: record.package_record.sha256.clone(),
+                sha256: record.package_record.sha256,
             });
         }
     }
@@ -96,19 +96,16 @@ pub async fn download_and_stage_packages(
             let progress = progress.clone();
             let completed = completed.clone();
             let fetched = fetched.clone();
-            async move {
-                stage_package(
-                    entry,
-                    client,
-                    channel_dir,
-                    cache_dir,
-                    progress,
-                    completed,
-                    fetched,
-                    total_packages,
-                )
-                .await
-            }
+            let ctx = StageContext::new(
+                client,
+                channel_dir,
+                cache_dir,
+                progress,
+                completed,
+                fetched,
+                total_packages,
+            );
+            async move { stage_package(entry, ctx).await }
         })
         .buffer_unordered(MAX_PARALLEL_DOWNLOADS)
         .try_collect::<()>()
@@ -123,8 +120,7 @@ pub async fn download_and_stage_packages(
     })
 }
 
-async fn stage_package(
-    entry: PackageEntry,
+struct StageContext {
     client: Client,
     channel_dir: PathBuf,
     cache_dir: PathBuf,
@@ -132,7 +128,31 @@ async fn stage_package(
     completed: Arc<AtomicUsize>,
     fetched: Arc<AtomicUsize>,
     total_packages: usize,
-) -> Result<()> {
+}
+
+impl StageContext {
+    fn new(
+        client: Client,
+        channel_dir: PathBuf,
+        cache_dir: PathBuf,
+        progress: ProgressBar,
+        completed: Arc<AtomicUsize>,
+        fetched: Arc<AtomicUsize>,
+        total_packages: usize,
+    ) -> Self {
+        Self {
+            client,
+            channel_dir,
+            cache_dir,
+            progress,
+            completed,
+            fetched,
+            total_packages,
+        }
+    }
+}
+
+async fn stage_package(entry: PackageEntry, ctx: StageContext) -> Result<()> {
     let PackageEntry {
         subdir,
         file_name,
@@ -140,7 +160,7 @@ async fn stage_package(
         sha256,
     } = entry;
 
-    let channel_subdir = channel_dir.join(&subdir);
+    let channel_subdir = ctx.channel_dir.join(&subdir);
     fs::create_dir_all(&channel_subdir).await.with_context(|| {
         format!(
             "failed to create channel subdir {}",
@@ -148,7 +168,7 @@ async fn stage_package(
         )
     })?;
 
-    let cache_subdir = cache_dir.join(&subdir);
+    let cache_subdir = ctx.cache_dir.join(&subdir);
     fs::create_dir_all(&cache_subdir)
         .await
         .with_context(|| format!("failed to create cache subdir {}", cache_subdir.display()))?;
@@ -156,22 +176,23 @@ async fn stage_package(
     let cached_path = cache_subdir.join(&file_name);
     let staged_path = channel_subdir.join(&file_name);
 
-    let cache_ready = verify_cached_package(&cached_path, sha256.clone()).await?;
+    let cache_ready = verify_cached_package(&cached_path, sha256).await?;
     let mut downloaded = false;
     if !cache_ready {
-        download_to_cache(&client, &url, &cached_path, sha256.clone()).await?;
+        download_to_cache(&ctx.client, &url, &cached_path, sha256).await?;
         downloaded = true;
     }
 
     copy_into_channel(&cached_path, &staged_path).await?;
 
     if downloaded {
-        fetched.fetch_add(1, Ordering::Relaxed);
+        ctx.fetched.fetch_add(1, Ordering::Relaxed);
     }
 
-    let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
-    progress.set_message(format!("Download packages ({done}/{total_packages})"));
-    progress.tick();
+    let done = ctx.completed.fetch_add(1, Ordering::Relaxed) + 1;
+    ctx.progress
+        .set_message(format!("Download packages ({done}/{})", ctx.total_packages));
+    ctx.progress.tick();
 
     Ok(())
 }

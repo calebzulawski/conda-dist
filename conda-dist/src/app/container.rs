@@ -74,7 +74,7 @@ pub async fn execute(
 
     let platform_summary = format_platform_list(&target_platforms);
 
-    let installer_label = format!("Prepare installer bundle [{}]", platform_summary);
+    let installer_label = format!("Prepare installer bundle [{platform_summary}]");
     let installer_step = progress.step(installer_label.clone());
     let prep_ref = &prep;
     let installer_platforms = target_platforms.clone();
@@ -83,7 +83,6 @@ pub async fn execute(
         .run_with(
             Some(Duration::from_millis(120)),
             {
-                let installer_platforms = installer_platforms;
                 move |handle| async move {
                     let mut counter = handle.counter(total_installers);
                     prepare_self_extracting_installers(&mut counter, prep_ref, &installer_platforms)
@@ -98,10 +97,7 @@ pub async fn execute(
         .clone()
         .unwrap_or_else(|| format!("/opt/{}", prep.environment_name));
     if !install_prefix.starts_with('/') {
-        bail!(
-            "container prefix '{}' must be an absolute path",
-            install_prefix
-        );
+        bail!("container prefix '{install_prefix}' must be an absolute path");
     }
 
     let context_dir = prepare_build_directory(&workspace, &prep.environment_name)?;
@@ -139,7 +135,7 @@ pub async fn execute(
     drop(progress);
 
     for message in final_messages {
-        println!("{}", message);
+        println!("{message}");
     }
 
     Ok(())
@@ -274,7 +270,7 @@ fn prepare_self_extracting_installers(
         );
     }
 
-    Ok(platforms.iter().copied().zip(paths.into_iter()).collect())
+    Ok(platforms.iter().copied().zip(paths).collect())
 }
 
 fn prepare_build_directory(workspace: &Workspace, environment_name: &str) -> Result<PathBuf> {
@@ -346,8 +342,8 @@ fn create_build_context(
         let arch = spec
             .split('/')
             .nth(1)
-            .ok_or_else(|| anyhow!("unsupported runtime specification '{}'", spec))?;
-        let filename = format!("installer-{}", arch);
+            .ok_or_else(|| anyhow!("unsupported runtime specification '{spec}'"))?;
+        let filename = format!("installer-{arch}");
         let staged_installer = installers_dir.join(&filename);
 
         if staged_installer.exists() {
@@ -551,15 +547,15 @@ async fn podman_save_image(runtime: &RuntimeConfig, output_path: &Path) -> Resul
             .join(output_path)
     };
 
-    if let Some(parent) = archive_path.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).with_context(|| {
-                format!(
-                    "failed to prepare directory {} for podman export",
-                    parent.display()
-                )
-            })?;
-        }
+    if let Some(parent) = archive_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to prepare directory {} for podman export",
+                parent.display()
+            )
+        })?;
     }
 
     let archive_spec = format!("oci-archive:{}", archive_path.to_string_lossy());
