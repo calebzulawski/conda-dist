@@ -11,12 +11,32 @@ use crate::downloader::DownloadSummary;
 
 use crate::cli::{Cli, Command};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LockMode {
+    Auto,
+    Unlock,
+    Locked,
+}
+
 pub async fn execute(cli: Cli) -> Result<()> {
-    let Cli { work_dir, command } = cli;
+    let Cli {
+        work_dir,
+        locked,
+        unlock,
+        command,
+    } = cli;
+    let lock_mode = if unlock {
+        LockMode::Unlock
+    } else if locked {
+        LockMode::Locked
+    } else {
+        LockMode::Auto
+    };
     match command {
-        Command::Installer(args) => installer::execute(args, work_dir.clone()).await,
-        Command::Container(args) => container::execute(args, work_dir).await,
-        Command::Package(args) => package::execute(args, work_dir).await,
+        Command::Lock(args) => environment::execute_lock(args, work_dir, lock_mode).await,
+        Command::Installer(args) => installer::execute(args, work_dir.clone(), lock_mode).await,
+        Command::Container(args) => container::execute(args, work_dir, lock_mode).await,
+        Command::Package(args) => package::execute(args, work_dir, lock_mode).await,
     }
 }
 

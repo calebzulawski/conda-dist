@@ -1,19 +1,23 @@
-use std::{path::PathBuf, time::Duration};
+use std::{env, path::PathBuf, time::Duration};
 
 use anyhow::{Result, bail};
 
 use crate::{cli::InstallerArgs, conda, installer, progress::Progress, workspace::Workspace};
 
 use super::{
-    context::load_manifest_context, environment::prepare_environment, push_download_summary,
+    LockMode, context::load_manifest_context, environment::prepare_environment,
+    push_download_summary,
 };
 
-pub async fn execute(args: InstallerArgs, work_dir: Option<PathBuf>) -> Result<()> {
+pub async fn execute(
+    args: InstallerArgs,
+    work_dir: Option<PathBuf>,
+    lock_mode: LockMode,
+) -> Result<()> {
     let InstallerArgs {
         manifest,
-        output,
+        output_dir,
         installer_platform,
-        unlock,
     } = args;
 
     let manifest_ctx = load_manifest_context(manifest)?;
@@ -21,8 +25,11 @@ pub async fn execute(args: InstallerArgs, work_dir: Option<PathBuf>) -> Result<(
     let workspace = Workspace::from_manifest_dir(&manifest_ctx.manifest_dir, work_dir)?;
 
     let default_script_path = manifest_ctx.manifest_dir.join(environment_name);
-    let script_path =
-        installer::resolve_script_path(output.unwrap_or(default_script_path), environment_name)?;
+    let requested_path = match output_dir {
+        Some(path) => env::current_dir()?.join(path),
+        None => default_script_path,
+    };
+    let script_path = installer::resolve_script_path(requested_path, environment_name)?;
 
     let target_platforms = conda::resolve_target_platforms(manifest_ctx.config.platforms())?;
     if target_platforms.is_empty() {
@@ -32,11 +39,11 @@ pub async fn execute(args: InstallerArgs, work_dir: Option<PathBuf>) -> Result<(
     let progress = Progress::stdout();
     let mut final_messages = Vec::new();
 
-    let (prep, download_summary) = prepare_environment(
+    let (prep, download_summary, _) = prepare_environment(
         &manifest_ctx,
         &workspace,
         target_platforms,
-        unlock,
+        lock_mode,
         &progress,
     )
     .await?;

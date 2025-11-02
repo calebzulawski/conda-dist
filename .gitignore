@@ -1,7 +1,9 @@
 target/
-examples/bash-*.sh
+examples/**/*.rpm
+examples/**/*.deb
 examples/*.oci.tar
-examples/portable-bash-packages
+examples/portable-bash-*
+examples/bash.lock
 conda-dist/installers
 .conda-dist
 docs/book

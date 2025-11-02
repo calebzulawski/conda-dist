@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     str::FromStr,
     time::{Duration, SystemTime},
@@ -17,6 +17,7 @@ use std::os::unix::fs::PermissionsExt;
 use crate::{cli::PackageArgs, conda, installer, progress::Progress, workspace::Workspace};
 
 use super::{
+    LockMode,
     context::{ManifestContext, load_manifest_context},
     environment::{EnvironmentPreparation, prepare_environment},
     push_download_summary,
@@ -45,10 +46,6 @@ impl PackageFormat {
             Self::Rpm => "rpm",
             Self::Deb => "deb",
         }
-    }
-
-    fn subdir(self) -> &'static str {
-        self.label()
     }
 }
 
@@ -134,15 +131,18 @@ impl PackageMetadata {
     }
 }
 
-pub async fn execute(args: PackageArgs, work_dir: Option<PathBuf>) -> Result<()> {
+pub async fn execute(
+    args: PackageArgs,
+    work_dir: Option<PathBuf>,
+    lock_mode: LockMode,
+) -> Result<()> {
     let PackageArgs {
         manifest,
-        unlock,
         engine,
         rpm_images,
         deb_images,
         platform,
-        output,
+        output_dir,
     } = args;
 
     if rpm_images.is_empty() && deb_images.is_empty() {
@@ -191,11 +191,11 @@ pub async fn execute(args: PackageArgs, work_dir: Option<PathBuf>) -> Result<()>
     let progress = Progress::stdout();
     let mut final_messages = Vec::new();
 
-    let (prep, download_summary) = prepare_environment(
+    let (prep, download_summary, _) = prepare_environment(
         &manifest_ctx,
         &workspace,
         requested_platforms.clone(),
-        unlock,
+        lock_mode,
         &progress,
     )
     .await?;
@@ -246,17 +246,9 @@ pub async fn execute(args: PackageArgs, work_dir: Option<PathBuf>) -> Result<()>
 
     let metadata = PackageMetadata::from_manifest(&manifest_ctx, &prep)?;
 
-    let output_root = match output {
-        Some(path) => {
-            if path.is_absolute() {
-                path
-            } else {
-                manifest_ctx.manifest_dir.join(path)
-            }
-        }
-        None => manifest_ctx
-            .manifest_dir
-            .join(format!("{}-packages", metadata.name)),
+    let output_root = match output_dir {
+        Some(path) => env::current_dir()?.join(path),
+        None => manifest_ctx.manifest_dir.clone(),
     };
     fs::create_dir_all(&output_root).with_context(|| {
         format!(
@@ -734,10 +726,7 @@ where
     let arch = arch_resolver(platform)?;
     for image in images {
         let subdir = sanitize_image_label(image);
-        let dir = output_root
-            .join(format.subdir())
-            .join(platform.as_str())
-            .join(subdir);
+        let dir = output_root.join(&subdir);
         fs::create_dir_all(&dir).with_context(|| {
             format!(
                 "failed to prepare {} output directory {}",

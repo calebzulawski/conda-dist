@@ -212,15 +212,15 @@ jobs:
           RPM_IMAGE: redhat/ubi10
           DEB_IMAGE: ubuntu:24.04
         run: |
-          rm -rf examples/portable-bash-packages
           release/conda-dist package examples/bash.toml \
             --rpm-image "$RPM_IMAGE" \
-            --deb-image "$DEB_IMAGE"
+            --deb-image "$DEB_IMAGE" \
+            --output-dir native-packages
       - name: Upload native packages
         uses: actions/upload-artifact@v4
         with:
           name: native-packages-linux-64
-          path: examples/portable-bash-packages
+          path: native-packages
           if-no-files-found: error
 
   test-installers:
@@ -265,12 +265,12 @@ jobs:
         include:
           - format: rpm
             container: redhat/ubi10
-            package_dir: native-packages/rpm/linux-64/redhat_ubi10
+            package_dir: native-packages/redhat_ubi10
             package_ext: rpm
             install: dnf install -y
           - format: deb
             container: ubuntu:24.04
-            package_dir: native-packages/deb/linux-64/ubuntu_24_04
+            package_dir: native-packages/ubuntu_24_04
             package_ext: deb
             install: apt install -y
     container: ${{ matrix.container }}

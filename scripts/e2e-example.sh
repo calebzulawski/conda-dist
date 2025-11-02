@@ -31,7 +31,7 @@ RATTLER_CACHE_DIR="${E2E_CACHE_DIR}" \
     installer \
     "${MANIFEST}" \
     --installer-platform host \
-    --output "${E2E_OUTPUT_DIR}"
+    --output-dir "${E2E_OUTPUT_DIR}"
 
 INSTALLER_PATH="$(find "${E2E_OUTPUT_DIR}" -type f -print -quit)"
 if [[ -z "${INSTALLER_PATH}" ]]; then

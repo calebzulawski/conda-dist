@@ -8,8 +8,16 @@ use crate::installer::InstallerPlatformSelection;
 #[command(version, about = "Solve conda dependencies and produce artifacts", long_about = None)]
 pub struct Cli {
     /// Workspace directory used for cached artifacts (defaults to <manifest>/.conda-dist)
-    #[arg(long = "work-dir", value_name = "PATH")]
+    #[arg(long = "work-dir", value_name = "PATH", global = true)]
     pub work_dir: Option<PathBuf>,
+
+    /// Require the existing lockfile and skip solving; fails if the lockfile is stale or missing
+    #[arg(long = "locked", global = true, conflicts_with = "unlock")]
+    pub locked: bool,
+
+    /// Regenerate the lockfile even if one already exists
+    #[arg(long = "unlock", global = true, conflicts_with = "locked")]
+    pub unlock: bool,
 
     #[command(subcommand)]
     pub command: Command,
@@ -17,6 +25,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Update or validate the lockfile without producing artifacts
+    Lock(LockArgs),
     /// Build self-extracting installers
     Installer(InstallerArgs),
     /// Build container images embedding the environment
@@ -26,18 +36,21 @@ pub enum Command {
 }
 
 #[derive(Debug, Args)]
+pub struct LockArgs {
+    /// Path to the conda-dist manifest (conda-dist.toml)
+    #[arg(value_name = "MANIFEST", default_value = "conda-dist.toml")]
+    pub manifest: PathBuf,
+}
+
+#[derive(Debug, Args)]
 pub struct InstallerArgs {
     /// Path to the conda-dist manifest (conda-dist.toml)
     #[arg(value_name = "MANIFEST", default_value = "conda-dist.toml")]
     pub manifest: PathBuf,
 
-    /// Optional path to write the self-extracting installer script
-    #[arg(long = "output", alias = "output-dir", value_name = "PATH")]
-    pub output: Option<PathBuf>,
-
-    /// Regenerate the lockfile instead of reusing any cached version
-    #[arg(long = "unlock")]
-    pub unlock: bool,
+    /// Optional directory to write the installer binary
+    #[arg(long = "output-dir", alias = "output", value_name = "PATH")]
+    pub output_dir: Option<PathBuf>,
 
     /// Select which installer platform(s) to build
     #[arg(
@@ -62,10 +75,6 @@ pub struct ContainerArgs {
     #[arg(long = "engine", value_name = "PATH")]
     pub engine: Option<PathBuf>,
 
-    /// Regenerate the lockfile instead of reusing any cached version
-    #[arg(long = "unlock")]
-    pub unlock: bool,
-
     /// Path to write the resulting OCI archive (defaults to <manifest-dir>/<name>-container.oci.tar)
     #[arg(long = "oci-output", value_name = "PATH")]
     pub oci_output: Option<PathBuf>,
@@ -76,10 +85,6 @@ pub struct PackageArgs {
     /// Path to the conda-dist manifest (conda-dist.toml)
     #[arg(value_name = "MANIFEST", default_value = "conda-dist.toml")]
     pub manifest: PathBuf,
-
-    /// Regenerate the lockfile instead of reusing any cached version
-    #[arg(long = "unlock")]
-    pub unlock: bool,
 
     /// Path to the container engine binary (defaults to docker, then podman)
     #[arg(long = "engine", value_name = "PATH")]
@@ -97,9 +102,9 @@ pub struct PackageArgs {
     #[arg(long = "platform", value_name = "PLATFORM")]
     pub platform: Vec<String>,
 
-    /// Output directory for generated packages (defaults to <manifest-dir>/<name>-packages)
-    #[arg(long = "output", value_name = "PATH")]
-    pub output: Option<PathBuf>,
+    /// Output directory for generated packages (defaults to <manifest-dir>)
+    #[arg(long = "output-dir", alias = "output", value_name = "PATH")]
+    pub output_dir: Option<PathBuf>,
 }
 
 pub fn parse() -> Cli {
