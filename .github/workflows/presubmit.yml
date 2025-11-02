@@ -215,7 +215,7 @@ jobs:
           release/conda-dist package examples/bash.toml \
             --rpm-image "$RPM_IMAGE" \
             --deb-image "$DEB_IMAGE" \
-            --output native-packages
+            --output-dir native-packages
       - name: Upload native packages
         uses: actions/upload-artifact@v4
         with:

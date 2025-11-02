@@ -48,9 +48,9 @@ pub struct InstallerArgs {
     #[arg(value_name = "MANIFEST", default_value = "conda-dist.toml")]
     pub manifest: PathBuf,
 
-    /// Optional path to write the self-extracting installer script
-    #[arg(long = "output", alias = "output-dir", value_name = "PATH")]
-    pub output: Option<PathBuf>,
+    /// Optional directory to write the installer binary
+    #[arg(long = "output-dir", alias = "output", value_name = "PATH")]
+    pub output_dir: Option<PathBuf>,
 
     /// Select which installer platform(s) to build
     #[arg(
@@ -103,8 +103,8 @@ pub struct PackageArgs {
     pub platform: Vec<String>,
 
     /// Output directory for generated packages (defaults to <manifest-dir>)
-    #[arg(long = "output", value_name = "PATH")]
-    pub output: Option<PathBuf>,
+    #[arg(long = "output-dir", alias = "output", value_name = "PATH")]
+    pub output_dir: Option<PathBuf>,
 }
 
 pub fn parse() -> Cli {

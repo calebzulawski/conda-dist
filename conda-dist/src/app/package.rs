@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     str::FromStr,
     time::{Duration, SystemTime},
@@ -142,7 +142,7 @@ pub async fn execute(
         rpm_images,
         deb_images,
         platform,
-        output,
+        output_dir,
     } = args;
 
     if rpm_images.is_empty() && deb_images.is_empty() {
@@ -246,14 +246,8 @@ pub async fn execute(
 
     let metadata = PackageMetadata::from_manifest(&manifest_ctx, &prep)?;
 
-    let output_root = match output {
-        Some(path) => {
-            if path.is_absolute() {
-                path
-            } else {
-                manifest_ctx.manifest_dir.join(path)
-            }
-        }
+    let output_root = match output_dir {
+        Some(path) => env::current_dir()?.join(path),
         None => manifest_ctx.manifest_dir.clone(),
     };
     fs::create_dir_all(&output_root).with_context(|| {
