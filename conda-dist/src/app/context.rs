@@ -6,8 +6,15 @@ use crate::config;
 
 #[derive(Debug)]
 pub struct ManifestContext {
+    pub manifest_path: PathBuf,
     pub manifest_dir: PathBuf,
     pub config: config::CondaDistConfig,
+}
+
+impl ManifestContext {
+    pub fn lockfile_path(&self) -> PathBuf {
+        self.manifest_path.with_extension("lock")
+    }
 }
 
 pub fn canonicalize_manifest(manifest: PathBuf) -> Result<PathBuf> {
@@ -26,6 +33,7 @@ pub fn load_manifest_context(manifest: PathBuf) -> Result<ManifestContext> {
     let config = config::load_manifest(&manifest_path)?;
 
     Ok(ManifestContext {
+        manifest_path,
         manifest_dir,
         config,
     })

@@ -97,7 +97,7 @@ pub struct PackageArgs {
     #[arg(long = "platform", value_name = "PLATFORM")]
     pub platform: Vec<String>,
 
-    /// Output directory for generated packages (defaults to <manifest-dir>/<name>-packages)
+    /// Output directory for generated packages (defaults to <manifest-dir>)
     #[arg(long = "output", value_name = "PATH")]
     pub output: Option<PathBuf>,
 }

@@ -66,14 +66,10 @@ pub async fn prepare_environment(
         .chain(channels.iter().map(|ch| ch.base_url.to_string()))
         .collect();
 
-    let workspace_lockfile_path = workspace.lockfile_path();
+    let lockfile_path = manifest_ctx.lockfile_path();
     let solve_platforms_for_lock = conda::augment_with_noarch(&target_platforms);
-    let locked_packages_all = if !unlock_lockfile && workspace_lockfile_path.exists() {
-        conda::load_locked_packages(
-            &workspace_lockfile_path,
-            &environment_name,
-            &solve_platforms_for_lock,
-        )?
+    let locked_packages_all = if !unlock_lockfile && lockfile_path.exists() {
+        conda::load_locked_packages(&lockfile_path, &environment_name, &solve_platforms_for_lock)?
     } else {
         Vec::new()
     };
@@ -196,13 +192,8 @@ pub async fn prepare_environment(
 
     let lock_file = conda::build_lockfile(&environment_name, &channel_urls, &solved_records)?;
     lock_file
-        .to_path(&workspace_lockfile_path)
-        .with_context(|| {
-            format!(
-                "failed to write lockfile to workspace at {}",
-                workspace_lockfile_path.display()
-            )
-        })?;
+        .to_path(&lockfile_path)
+        .with_context(|| format!("failed to write lockfile to {}", lockfile_path.display()))?;
 
     let lockfile_path = channel_dir.join(LOCKFILE_NAME);
     lock_file

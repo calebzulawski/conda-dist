@@ -46,10 +46,6 @@ impl PackageFormat {
             Self::Deb => "deb",
         }
     }
-
-    fn subdir(self) -> &'static str {
-        self.label()
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -254,9 +250,7 @@ pub async fn execute(args: PackageArgs, work_dir: Option<PathBuf>) -> Result<()>
                 manifest_ctx.manifest_dir.join(path)
             }
         }
-        None => manifest_ctx
-            .manifest_dir
-            .join(format!("{}-packages", metadata.name)),
+        None => manifest_ctx.manifest_dir.clone(),
     };
     fs::create_dir_all(&output_root).with_context(|| {
         format!(
@@ -734,10 +728,7 @@ where
     let arch = arch_resolver(platform)?;
     for image in images {
         let subdir = sanitize_image_label(image);
-        let dir = output_root
-            .join(format.subdir())
-            .join(platform.as_str())
-            .join(subdir);
+        let dir = output_root.join(&subdir);
         fs::create_dir_all(&dir).with_context(|| {
             format!(
                 "failed to prepare {} output directory {}",
