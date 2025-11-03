@@ -30,7 +30,7 @@ pub fn parse(project_name: &str) -> Result<Cli> {
     use clap::CommandFactory;
 
     let mut command = Cli::command();
-    let about = format!("Install {project}", project = project_name);
+    let about = format!("Install {project_name}");
     let about: &'static str = Box::leak(about.into_boxed_str());
     command = command.about(about);
 

@@ -14,17 +14,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     let installers_path = out_dir.join("installers.rs");
 
     let mut entries = Vec::new();
-    for entry in fs::read_dir(&installers_dir)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
-            continue;
+    if installers_dir.exists() {
+        for entry in fs::read_dir(&installers_dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let path = entry.path();
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| "installer file name is not valid UTF-8")?;
+            if name == ".gitkeep" {
+                continue;
+            }
+            entries.push((name, path));
         }
-        let path = entry.path();
-        let name = entry
-            .file_name()
-            .into_string()
-            .map_err(|_| "installer file name is not valid UTF-8")?;
-        entries.push((name, path));
     }
 
     entries.sort_by(|a, b| a.0.cmp(&b.0));

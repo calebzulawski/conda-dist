@@ -10,8 +10,10 @@ pub fn detect_virtual_packages_for_platform(
     platform: Platform,
     overrides: Option<&PlatformVirtualPackageConfig>,
 ) -> Result<Vec<GenericVirtualPackage>> {
-    let mut packages = VirtualPackages::default();
-    packages.unix = platform.is_unix();
+    let mut packages = VirtualPackages {
+        unix: platform.is_unix(),
+        ..Default::default()
+    };
 
     if platform.is_windows() {
         packages.win = Some(Windows {

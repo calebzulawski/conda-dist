@@ -202,9 +202,9 @@ fn read_embedded_layout(file: &mut fs::File) -> Result<EmbeddedLayout> {
 fn locate_lockfile(channel_dir: &Path) -> Result<PathBuf> {
     let candidate = channel_dir.join(DEFAULT_LOCKFILE_NAME);
     if candidate.exists() {
-        return Ok(candidate.canonicalize().with_context(|| {
-            format!("failed to resolve lockfile path {}", candidate.display())
-        })?);
+        return candidate
+            .canonicalize()
+            .with_context(|| format!("failed to resolve lockfile path {}", candidate.display()));
     }
 
     bail!(

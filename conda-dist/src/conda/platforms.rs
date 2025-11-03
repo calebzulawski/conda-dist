@@ -18,10 +18,7 @@ pub fn resolve_target_platforms(raw_platforms: &[String]) -> Result<Vec<Platform
 
 pub fn augment_with_noarch(platforms: &[Platform]) -> Vec<Platform> {
     let mut solve_platforms = platforms.to_vec();
-    if !solve_platforms
-        .iter()
-        .any(|platform| *platform == Platform::NoArch)
-    {
+    if !solve_platforms.contains(&Platform::NoArch) {
         solve_platforms.push(Platform::NoArch);
     }
     solve_platforms

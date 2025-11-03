@@ -77,14 +77,11 @@ impl PreparedBundleMetadata {
         let mut featured = Vec::new();
         for entry in featured_packages {
             let package_name = PackageName::from_str(&entry).with_context(|| {
-                format!("featured package '{}' is not a valid package name", entry)
+                format!("featured package '{entry}' is not a valid package name")
             })?;
 
             if !available_names.contains(&package_name) {
-                bail!(
-                    "featured package '{}' was not found in the resolved environment",
-                    entry
-                );
+                bail!("featured package '{entry}' was not found in the resolved environment");
             }
 
             if seen.insert(package_name.clone()) {
@@ -169,7 +166,7 @@ pub fn resolve_installer_platforms(
         }
         InstallerPlatformSelection::Host => {
             let host = Platform::current();
-            if ordered_unique.iter().any(|p| *p == host) {
+            if ordered_unique.contains(&host) {
                 Ok(vec![host])
             } else {
                 bail!(
@@ -183,7 +180,7 @@ pub fn resolve_installer_platforms(
                 bail!("cannot build installer for 'noarch' platform");
             }
 
-            if manifest_platforms.iter().any(|p| *p == platform) {
+            if manifest_platforms.contains(&platform) {
                 Ok(vec![platform])
             } else {
                 bail!(
@@ -418,7 +415,7 @@ fn append_regular_file<W: Write>(
     let mut cursor = Cursor::new(bytes);
     builder
         .append_data(&mut header, &path, &mut cursor)
-        .with_context(|| format!("failed to add {} to archive", path))?;
+        .with_context(|| format!("failed to add {path} to archive"))?;
     Ok(())
 }
 
@@ -435,12 +432,11 @@ fn write_self_extracting_installer(
     metadata_bytes: &[u8],
     payload_bytes: &[u8],
 ) -> Result<()> {
-    if let Some(parent) = output_path.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).with_context(|| {
-                format!("failed to create parent directory {}", parent.display())
-            })?;
-        }
+    if let Some(parent) = output_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create parent directory {}", parent.display()))?;
     }
 
     let mut file = fs::File::create(output_path)

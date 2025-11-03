@@ -91,7 +91,7 @@ pub async fn run_command(cmd: &mut Command, action: &str) -> Result<()> {
     let output = cmd
         .output()
         .await
-        .with_context(|| format!("failed to execute {} command", action))?;
+        .with_context(|| format!("failed to execute {action} command"))?;
 
     if output.status.success() {
         Ok(())

@@ -109,7 +109,7 @@ struct PackageRow {
     license: String,
 }
 
-fn build_record_index<'a>(records: &'a [RepoDataRecord]) -> HashMap<&'a str, &'a RepoDataRecord> {
+fn build_record_index(records: &[RepoDataRecord]) -> HashMap<&str, &RepoDataRecord> {
     let mut map = HashMap::new();
     for record in records {
         map.insert(record.package_record.name.as_normalized(), record);

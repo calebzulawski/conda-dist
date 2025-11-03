@@ -32,7 +32,7 @@ pub async fn solve_environment(
         .map(|data| RepoDataIter(data.iter()))
         .collect();
 
-    let mut solver = resolvo::Solver::default();
+    let mut solver = resolvo::Solver;
     let solve_result = solver.solve(SolverTask {
         available_packages,
         locked_packages,

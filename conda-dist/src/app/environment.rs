@@ -102,9 +102,10 @@ pub async fn prepare_environment(
     let lock_reused =
         lockfile_exists && lock_error.is_none() && !matches!(lock_mode, LockMode::Unlock);
 
-    if matches!(lock_mode, LockMode::Locked) && lock_error.is_some() {
-        let reason = lock_error.expect("lockfile validation failed without error message");
-        bail!("lockfile is out of date: {}", reason);
+    if matches!(lock_mode, LockMode::Locked)
+        && let Some(lock_error) = lock_error
+    {
+        bail!("lockfile is out of date: {lock_error}");
     }
 
     let virtual_package_config = manifest_ctx.config.virtual_packages();
@@ -194,7 +195,6 @@ pub async fn prepare_environment(
         .run_with(
             None,
             {
-                let package_cache_dir = package_cache_dir;
                 move |handle| {
                     let progress_bar = handle.progress_bar();
                     let solved_records = solved_records_for_download.clone();
@@ -372,10 +372,7 @@ fn validate_platform_lock(
             .as_ref()
             .map(|name| name.as_normalized().to_string())
             .ok_or_else(|| {
-                anyhow!(
-                    "manifest dependency '{}' does not specify a package name",
-                    spec
-                )
+                anyhow!("manifest dependency '{spec}' does not specify a package name")
             })?;
 
         let record = by_name.get(&spec_name).ok_or_else(|| {
@@ -420,8 +417,7 @@ fn validate_platform_lock(
             let dep_spec =
                 MatchSpec::from_str(dependency, ParseStrictness::Lenient).with_context(|| {
                     format!(
-                        "failed to parse dependency '{}' for package '{}' in lockfile",
-                        dependency, name
+                        "failed to parse dependency '{dependency}' for package '{name}' in lockfile"
                     )
                 })?;
 
@@ -431,9 +427,7 @@ fn validate_platform_lock(
                 .map(|candidate| candidate.as_normalized().to_string())
                 .ok_or_else(|| {
                     anyhow!(
-                        "dependency '{}' for package '{}' is missing a package name",
-                        dependency,
-                        name
+                        "dependency '{dependency}' for package '{name}' is missing a package name"
                     )
                 })?;
 

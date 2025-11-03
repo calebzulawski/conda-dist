@@ -96,11 +96,10 @@ impl PackageMetadata {
             .config
             .container()
             .and_then(|cfg| cfg.prefix.clone())
-            .unwrap_or_else(|| format!("/opt/{}", name));
+            .unwrap_or_else(|| format!("/opt/{name}"));
         if !prefix.starts_with('/') {
             bail!(
-                "package prefix '{}' must be an absolute path; update container.prefix or specify a fully-qualified path",
-                prefix
+                "package prefix '{prefix}' must be an absolute path; update container.prefix or specify a fully-qualified path"
             );
         }
 
@@ -177,10 +176,7 @@ pub async fn execute(
 
     let manifest_platforms = conda::resolve_target_platforms(manifest_ctx.config.platforms())?;
     for platform in &requested_platforms {
-        if !manifest_platforms
-            .iter()
-            .any(|candidate| *candidate == *platform)
-        {
+        if !manifest_platforms.contains(platform) {
             bail!(
                 "selected platform '{}' is not listed in the manifest platforms",
                 platform.as_str()
@@ -202,7 +198,7 @@ pub async fn execute(
 
     let installer_platforms = prep.target_platforms.clone();
     let installer_summary = runtime::format_platform_list(&installer_platforms);
-    let installer_label = format!("Prepare installer bundle [{}]", installer_summary);
+    let installer_label = format!("Prepare installer bundle [{installer_summary}]");
     let installer_step = progress.step(installer_label.clone());
     let installer_dir = prep.staging_dir.path().join("installers");
     fs::create_dir_all(&installer_dir).with_context(|| {
@@ -218,8 +214,6 @@ pub async fn execute(
         .run_with(
             Some(Duration::from_millis(120)),
             {
-                let installer_dir = installer_dir;
-                let installer_platforms_for_task = installer_platforms_for_task;
                 move |handle| async move {
                     let mut counter = handle.counter(total_installers);
                     installer::create_installers(
@@ -359,29 +353,17 @@ pub async fn execute(
             })?;
 
         if let Some(script_path) = rpm_script.as_ref() {
-            enqueue_package_jobs(
-                PackageFormat::Rpm,
-                *platform,
-                &installer_path,
-                script_path,
-                &rpm_images,
-                &output_root,
-                &mut jobs,
-                |plat| rpm_arch(plat).map(|value| value.to_string()),
-            )?;
+            let ctx = JobContext::new(*platform, &installer_path, script_path, &output_root);
+            enqueue_package_jobs(PackageFormat::Rpm, &mut jobs, &ctx, &rpm_images, |plat| {
+                rpm_arch(plat).map(|value| value.to_string())
+            })?;
         }
 
         if let Some(script_path) = deb_script.as_ref() {
-            enqueue_package_jobs(
-                PackageFormat::Deb,
-                *platform,
-                &installer_path,
-                script_path,
-                &deb_images,
-                &output_root,
-                &mut jobs,
-                |plat| deb_arch(plat).map(|value| value.to_string()),
-            )?;
+            let ctx = JobContext::new(*platform, &installer_path, script_path, &output_root);
+            enqueue_package_jobs(PackageFormat::Deb, &mut jobs, &ctx, &deb_images, |plat| {
+                deb_arch(plat).map(|value| value.to_string())
+            })?;
         }
     }
 
@@ -533,8 +515,7 @@ async fn run_package_job(
     cmd.arg("--env")
         .arg(format!("PKG_DESCRIPTION_B64={}", metadata.description_b64));
     cmd.arg("--env").arg(format!(
-        "PKG_INSTALLER_PATH={}/{}",
-        INSTALLER_MOUNT_ROOT, installer_name
+        "PKG_INSTALLER_PATH={INSTALLER_MOUNT_ROOT}/{installer_name}"
     ));
 
     match format {
@@ -620,15 +601,15 @@ fn collect_new_artifacts(output_dir: &Path, start_time: SystemTime) -> Result<Ve
         }
     }
 
-    if candidates.is_empty() {
-        if let Some((modified, path)) = newest {
-            if modified >= start_time {
-                candidates.push(path);
-            } else if let Ok(diff) = start_time.duration_since(modified) {
-                if diff <= Duration::from_secs(2) {
-                    candidates.push(path);
-                }
-            }
+    if candidates.is_empty()
+        && let Some((modified, path)) = newest
+    {
+        if modified >= start_time {
+            candidates.push(path);
+        } else if let Ok(diff) = start_time.duration_since(modified)
+            && diff <= Duration::from_secs(2)
+        {
+            candidates.push(path);
         }
     }
 
@@ -680,7 +661,7 @@ fn compose_description(manifest: &installer::BundleMetadataManifest) -> String {
     if let Some(notes) = manifest.release_notes.as_ref() {
         let trimmed = notes.trim();
         if !trimmed.is_empty() {
-            sections.push(format!("Release notes:\n{}", trimmed));
+            sections.push(format!("Release notes:\n{trimmed}"));
         }
     }
     sections.join("\n\n")
@@ -710,23 +691,43 @@ fn sanitize_image_label(image: &str) -> String {
     }
 }
 
+struct JobContext<'a> {
+    platform: Platform,
+    installer_path: &'a Path,
+    script_path: &'a Path,
+    output_root: &'a Path,
+}
+
+impl<'a> JobContext<'a> {
+    fn new(
+        platform: Platform,
+        installer_path: &'a Path,
+        script_path: &'a Path,
+        output_root: &'a Path,
+    ) -> Self {
+        Self {
+            platform,
+            installer_path,
+            script_path,
+            output_root,
+        }
+    }
+}
+
 fn enqueue_package_jobs<F>(
     format: PackageFormat,
-    platform: Platform,
-    installer_path: &Path,
-    script_path: &Path,
-    images: &[String],
-    output_root: &Path,
     jobs: &mut Vec<PackageJob>,
+    ctx: &JobContext<'_>,
+    images: &[String],
     arch_resolver: F,
 ) -> Result<()>
 where
     F: Fn(Platform) -> Result<String>,
 {
-    let arch = arch_resolver(platform)?;
+    let arch = arch_resolver(ctx.platform)?;
     for image in images {
         let subdir = sanitize_image_label(image);
-        let dir = output_root.join(&subdir);
+        let dir = ctx.output_root.join(&subdir);
         fs::create_dir_all(&dir).with_context(|| {
             format!(
                 "failed to prepare {} output directory {}",
@@ -737,9 +738,9 @@ where
         jobs.push(PackageJob {
             format,
             image: image.clone(),
-            platform,
-            installer_path: installer_path.to_path_buf(),
-            script_path: script_path.to_path_buf(),
+            platform: ctx.platform,
+            installer_path: ctx.installer_path.to_path_buf(),
+            script_path: ctx.script_path.to_path_buf(),
             output_dir: dir,
             arch: arch.clone(),
         });
@@ -903,11 +904,10 @@ if [ ! -f "$RPM_SOURCE" ]; then
     exit 1
 fi
 
-mkdir -p "{output_dest}"
+mkdir -p "{OUTPUT_DEST_PATH}"
 RPM_BASENAME=$(basename "$RPM_SOURCE")
-cp "$RPM_SOURCE" "{output_dest}/$RPM_BASENAME"
-"#,
-        output_dest = OUTPUT_DEST_PATH
+cp "$RPM_SOURCE" "{OUTPUT_DEST_PATH}/$RPM_BASENAME"
+"#
     );
 
     write_script(&path, &script)?;
@@ -1039,10 +1039,9 @@ else
     printf ' .\n' >> "$CONTROL"
 fi
 
-mkdir -p "{output_dest}"
-dpkg-deb --build "$ROOT" "{output_dest}"
-"#,
-        output_dest = OUTPUT_DEST_PATH
+mkdir -p "{OUTPUT_DEST_PATH}"
+dpkg-deb --build "$ROOT" "{OUTPUT_DEST_PATH}"
+"#
     );
 
     write_script(&path, &script)?;

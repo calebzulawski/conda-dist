@@ -1,0 +1,7 @@
+bin.name = "conda-dist"
+args = ["--locked", "lock", "portable-bash.toml"]
+status.code = 1
+stderr = "Error: lockfile is out of date: lockfile missing package 'coreutils' required by manifest for platform linux-64\n"
+
+[fs]
+cwd = "../fixtures/lock-stale"
