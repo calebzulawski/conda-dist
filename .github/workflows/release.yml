@@ -59,12 +59,13 @@ jobs:
           for dir in artifacts/conda-dist-*; do
             [ -d "$dir" ] || continue
             platform=${dir##*/conda-dist-}
+            friendly=$(printf '%s\n' "$platform" | sed -e 's/^osx/macos/' -e 's/-64$/-x86_64/')
             src=$(find "$dir" -type f -print -quit)
             if [ -z "$src" ]; then
               echo "No artifact found in $dir" >&2
               exit 1
             fi
-            dest="release/conda-dist-${platform}"
+            dest="release/conda-dist-${friendly}"
             cp "$src" "$dest"
             chmod +x "$dest"
           done
