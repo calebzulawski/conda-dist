@@ -10,3 +10,4 @@ create-missing = true
 default-theme = "light"
 preferred-dark-theme = "navy"
 git-repository-url = "https://github.com/calebzulawski/conda-dist"
+

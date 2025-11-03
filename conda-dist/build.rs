@@ -13,6 +13,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let installers_dir = manifest_dir.join("installers");
     let installers_path = out_dir.join("installers.rs");
 
+    if !installers_dir.exists() {
+        fs::create_dir_all(&installers_dir)?;
+    }
+
     let mut entries = Vec::new();
     if installers_dir.exists() {
         for entry in fs::read_dir(&installers_dir)? {

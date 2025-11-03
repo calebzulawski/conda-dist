@@ -7,3 +7,4 @@ examples/bash.lock
 conda-dist/installers
 .conda-dist
 docs/book
+docs/src/cli
