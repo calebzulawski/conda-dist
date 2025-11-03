@@ -5,7 +5,7 @@ use clap::{Args, Parser, Subcommand};
 use crate::installer::InstallerPlatformSelection;
 
 #[derive(Debug, Parser)]
-#[command(version, about = "Solve conda dependencies and produce artifacts", long_about = None)]
+#[command(version, about = "Build distributable artifacts from Conda environments", long_about = None)]
 pub struct Cli {
     /// Workspace directory used for cached artifacts (defaults to <manifest>/.conda-dist)
     #[arg(long = "work-dir", value_name = "PATH", global = true)]
