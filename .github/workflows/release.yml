@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  prepare:
+    name: Tag release
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.determine.outputs.version }}
+      tag: ${{ steps.determine.outputs.tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Determine release version
+        id: determine
+        run: |
+          scripts/read-cargo-version.py > "$GITHUB_OUTPUT"
+
+      - name: Create tag
+        run: |
+          tag="${{ steps.determine.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git tag -a "$tag" -m "Release $tag"
+          git push origin "$tag"
+
+  presubmit:
+    name: Run presubmit
+    needs: prepare
+    uses: ./.github/workflows/presubmit.yml
+    secrets: inherit
+
+  publish:
+    name: Publish release
+    needs:
+      - prepare
+      - presubmit
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download conda-dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: conda-dist-*
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          for dir in artifacts/conda-dist-*; do
+            [ -d "$dir" ] || continue
+            platform=${dir##*/conda-dist-}
+            src=$(find "$dir" -type f -print -quit)
+            if [ -z "$src" ]; then
+              echo "No artifact found in $dir" >&2
+              exit 1
+            fi
+            dest="release/conda-dist-${platform}"
+            cp "$src" "$dest"
+            chmod +x "$dest"
+          done
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: conda-dist ${{ needs.prepare.outputs.version }}
+          files: release/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
