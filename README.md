@@ -1,6 +1,6 @@
 # conda-dist 🐍 ⇢ 📦
 
-conda-dist packages conda applications, producing portable installers and Docker images for use outside conda environments.
+conda-dist packages conda applications for use outside conda environments by producing portable installers, system packages, and Docker images.
 
 ## Overview
 
