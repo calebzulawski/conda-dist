@@ -234,14 +234,6 @@ fn prepare_self_extracting_installers(
     );
     let paths = result?;
 
-    if paths.len() != platforms.len() {
-        bail!(
-            "unexpected installer output; expected {} artifacts but received {}",
-            platforms.len(),
-            paths.len()
-        );
-    }
-
     Ok(platforms.iter().copied().zip(paths).collect())
 }
 
@@ -304,15 +296,6 @@ fn create_build_context(
             .ok_or_else(|| anyhow!("unsupported runtime specification '{spec}'"))?;
         let filename = format!("installer-{arch}");
         let staged_installer = installers_dir.join(&filename);
-
-        if staged_installer.exists() {
-            fs::remove_file(&staged_installer).with_context(|| {
-                format!(
-                    "failed to remove stale installer {}",
-                    staged_installer.display()
-                )
-            })?;
-        }
 
         fs::copy(source_path, &staged_installer).with_context(|| {
             format!(

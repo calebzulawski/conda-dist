@@ -178,7 +178,6 @@ pub async fn prepare_environment(
     let bundle_metadata = installer::PreparedBundleMetadata::from_config(
         &environment_name,
         manifest_ctx.config.metadata(),
-        &manifest_ctx.manifest_dir,
         &solved_records,
         manifest_ctx.config.author(),
     )?;
