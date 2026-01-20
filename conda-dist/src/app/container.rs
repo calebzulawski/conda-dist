@@ -194,12 +194,6 @@ fn derive_image_tag(
 ) -> Result<String> {
     let name = manifest_ctx.config.name();
     let version = manifest_ctx.config.version().trim();
-    if version.is_empty() {
-        bail!("manifest 'version' field cannot be empty for container builds");
-    }
-    if version.chars().any(|ch| ch.is_whitespace()) {
-        bail!("manifest 'version' field must not contain whitespace");
-    }
 
     let template = container_cfg.tag_template.trim();
     if template.is_empty() {
@@ -415,10 +409,6 @@ async fn build_image(
     context: &BuildContext,
     platforms: &[Platform],
 ) -> Result<PathBuf> {
-    if platforms.is_empty() {
-        bail!("no target platforms provided for container build");
-    }
-
     let specs = platforms
         .iter()
         .map(|platform| runtime::platform_to_runtime_spec(*platform).map(|spec| spec.to_string()))

@@ -32,9 +32,6 @@ pub async fn execute(
     let script_path = installer::resolve_script_path(requested_path, environment_name)?;
 
     let target_platforms = manifest_ctx.config.platforms().to_vec();
-    if target_platforms.is_empty() {
-        bail!("no target platforms specified");
-    }
 
     let progress = Progress::stdout();
     let mut final_messages = Vec::new();

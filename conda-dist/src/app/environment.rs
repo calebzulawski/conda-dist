@@ -245,9 +245,6 @@ pub async fn execute_lock(
     let manifest_ctx = load_manifest_context(args.manifest)?;
     let workspace = Workspace::from_manifest_dir(&manifest_ctx.manifest_dir, work_dir)?;
     let target_platforms = manifest_ctx.config.platforms().to_vec();
-    if target_platforms.is_empty() {
-        bail!("no target platforms specified");
-    }
 
     let progress = Progress::stdout();
     let (prep, _, lock_reused) = prepare_environment(
