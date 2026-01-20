@@ -2,7 +2,6 @@ use std::{
     collections::{HashMap, HashSet},
     env, fs,
     path::{Path, PathBuf},
-    str::FromStr,
     time::{Duration, SystemTime},
 };
 
@@ -14,7 +13,7 @@ use tokio::process::Command;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-use crate::{cli::PackageArgs, conda, installer, progress::Progress, workspace::Workspace};
+use crate::{cli::PackageArgs, installer, progress::Progress, workspace::Workspace};
 
 use super::{
     LockMode,
@@ -155,12 +154,7 @@ pub async fn execute(
     let mut requested_platforms: Vec<Platform> = if platform.is_empty() {
         vec![Platform::current()]
     } else {
-        let mut parsed = Vec::new();
-        for raw in platform {
-            let value = Platform::from_str(raw.trim()).map_err(|err| anyhow!(err))?;
-            parsed.push(value);
-        }
-        parsed
+        platform
     };
 
     let mut seen = HashSet::new();
@@ -174,7 +168,7 @@ pub async fn execute(
         ensure_linux_package_platform(*platform)?;
     }
 
-    let manifest_platforms = conda::resolve_target_platforms(manifest_ctx.config.platforms())?;
+    let manifest_platforms = manifest_ctx.config.platforms().to_vec();
     for platform in &requested_platforms {
         if !manifest_platforms.contains(platform) {
             bail!(

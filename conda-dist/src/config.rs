@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, fs, path::Path};
 
 use anyhow::{Context, Result, bail};
-use rattler_conda_types::{MatchSpec, ParseStrictness, Platform};
+use rattler_conda_types::{Channel, ChannelConfig, MatchSpec, ParseStrictness, Platform};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -10,7 +10,7 @@ pub struct CondaDistConfig {
     author: String,
     version: String,
     channels: Vec<String>,
-    platforms: Vec<String>,
+    platforms: Vec<Platform>,
     dependencies: DependencySpec,
     #[serde(default)]
     metadata: Option<BundleMetadataConfig>,
@@ -18,6 +18,8 @@ pub struct CondaDistConfig {
     container: Option<ContainerConfig>,
     #[serde(default)]
     virtual_packages: Option<VirtualPackagesConfig>,
+    #[serde(skip, default = "default_channel_config")]
+    channel_config: ChannelConfig,
 }
 
 impl CondaDistConfig {
@@ -33,11 +35,18 @@ impl CondaDistConfig {
         &self.version
     }
 
-    pub fn channels(&self) -> &[String] {
-        &self.channels
+    pub fn channels(&self) -> Result<Vec<Channel>> {
+        self.channels
+            .iter()
+            .map(|channel| {
+                let trimmed = channel.trim();
+                Channel::from_str(trimmed, &self.channel_config)
+                    .with_context(|| format!("failed to parse channel '{trimmed}'"))
+            })
+            .collect()
     }
 
-    pub fn platforms(&self) -> &[String] {
+    pub fn platforms(&self) -> &[Platform] {
         &self.platforms
     }
 
@@ -96,13 +105,6 @@ impl CondaDistConfig {
         if self.platforms.is_empty() {
             bail!("manifest must contain at least one entry in 'platforms'");
         }
-        if self
-            .platforms
-            .iter()
-            .any(|platform| platform.trim().is_empty())
-        {
-            bail!("manifest 'platforms' entries must not be empty");
-        }
         Ok(())
     }
 }
@@ -130,8 +132,10 @@ impl DependencySpec {
 pub fn load_manifest(path: &Path) -> Result<CondaDistConfig> {
     let raw = fs::read_to_string(path)
         .with_context(|| format!("failed to read manifest at {}", path.display()))?;
-    let config: CondaDistConfig = toml::from_str(&raw)
+    let mut config: CondaDistConfig = toml::from_str(&raw)
         .with_context(|| format!("failed to parse manifest {}", path.display()))?;
+    let manifest_dir = path.parent().unwrap_or_else(|| Path::new("."));
+    config.channel_config = ChannelConfig::default_with_root_dir(manifest_dir.to_path_buf());
     config.validate()?;
     Ok(config)
 }
@@ -174,6 +178,10 @@ fn default_base_image() -> String {
 
 fn default_tag_template() -> String {
     "{name}:{version}".to_string()
+}
+
+fn default_channel_config() -> ChannelConfig {
+    ChannelConfig::default_with_root_dir(Path::new(".").to_path_buf())
 }
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct VirtualPackagesConfig {
