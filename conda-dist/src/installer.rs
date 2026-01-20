@@ -51,7 +51,6 @@ impl PreparedBundleMetadata {
     pub fn from_config(
         environment_name: &str,
         config: Option<&BundleMetadataConfig>,
-        _manifest_dir: &Path,
         records: &[RepoDataRecord],
         author: &str,
     ) -> Result<Self> {
@@ -225,12 +224,6 @@ pub fn create_installers(
             output_dir.display()
         )
     })?;
-
-    let total = selected_platforms.len();
-    if total == 0 {
-        progress.finish();
-        return Ok(Vec::new());
-    }
 
     let mut written = Vec::new();
     let metadata_blob = launcher_metadata_blob(metadata)?;

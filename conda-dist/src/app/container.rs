@@ -1,7 +1,6 @@
 use std::{
     env, fs,
     path::{Path, PathBuf},
-    str::FromStr,
     time::Duration,
 };
 
@@ -40,12 +39,14 @@ pub async fn execute(
     let container_cfg = manifest_ctx.config.container().cloned().unwrap_or_default();
     let workspace = Workspace::from_manifest_dir(&manifest_ctx.manifest_dir, work_dir)?;
 
-    let target_platforms = resolve_target_platforms(&manifest_ctx, platform.as_deref())?;
-    ensure_linux_platforms(&target_platforms)?;
+    let target_platforms = resolve_target_platforms(&manifest_ctx, platform)?;
 
     let runtime_binary = runtime::resolve_runtime(engine)?;
     let image_tag = derive_image_tag(&manifest_ctx, &container_cfg)?;
-    let runtime = RuntimeConfig::new(runtime_binary, image_tag);
+    let runtime = RuntimeConfig {
+        binary: runtime_binary,
+        tag: image_tag,
+    };
 
     let progress = Progress::stdout();
     let mut final_messages = Vec::new();
@@ -72,7 +73,7 @@ pub async fn execute(
             .join(format!("{}-container.oci.tar", prep.environment_name)),
     };
 
-    let platform_summary = format_platform_list(&target_platforms);
+    let platform_summary = runtime::format_platform_list(&target_platforms);
 
     let installer_label = format!("Prepare installer bundle [{platform_summary}]");
     let installer_step = progress.step(installer_label.clone());
@@ -143,13 +144,18 @@ pub async fn execute(
 
 fn resolve_target_platforms(
     manifest_ctx: &ManifestContext,
-    requested: Option<&str>,
+    requested: Option<Platform>,
 ) -> Result<Vec<Platform>> {
-    if let Some(raw) = requested {
-        let platform = Platform::from_str(raw.trim()).map_err(|err| anyhow!(err))?;
+    if let Some(platform) = requested {
+        if !is_linux_platform(platform) {
+            bail!(
+                "container builds are only supported for linux platforms (received '{}')",
+                platform.as_str()
+            );
+        }
         Ok(vec![platform])
     } else {
-        let platforms = crate::conda::resolve_target_platforms(manifest_ctx.config.platforms())?;
+        let platforms = manifest_ctx.config.platforms().to_vec();
         let linux_platforms: Vec<Platform> = platforms
             .into_iter()
             .filter(|platform| is_linux_platform(*platform))
@@ -163,20 +169,6 @@ fn resolve_target_platforms(
     }
 }
 
-fn ensure_linux_platforms(platforms: &[Platform]) -> Result<()> {
-    if let Some(non_linux) = platforms
-        .iter()
-        .find(|platform| !is_linux_platform(**platform))
-    {
-        bail!(
-            "container builds are only supported for linux platforms (received '{}')",
-            non_linux.as_str()
-        );
-    }
-
-    Ok(())
-}
-
 fn is_linux_platform(platform: Platform) -> bool {
     platform.as_str().starts_with("linux-")
 }
@@ -187,32 +179,12 @@ struct RuntimeConfig {
     tag: String,
 }
 
-impl RuntimeConfig {
-    fn new(binary: RuntimeBinary, tag: String) -> Self {
-        Self { binary, tag }
-    }
-
-    fn binary(&self) -> &Path {
-        self.binary.binary()
-    }
-
-    fn engine(&self) -> RuntimeEngine {
-        self.binary.engine()
-    }
-}
-
 fn derive_image_tag(
     manifest_ctx: &ManifestContext,
     container_cfg: &ContainerConfig,
 ) -> Result<String> {
     let name = manifest_ctx.config.name();
     let version = manifest_ctx.config.version().trim();
-    if version.is_empty() {
-        bail!("manifest 'version' field cannot be empty for container builds");
-    }
-    if version.chars().any(|ch| ch.is_whitespace()) {
-        bail!("manifest 'version' field must not contain whitespace");
-    }
 
     let template = container_cfg.tag_template.trim();
     if template.is_empty() {
@@ -262,14 +234,6 @@ fn prepare_self_extracting_installers(
     );
     let paths = result?;
 
-    if paths.len() != platforms.len() {
-        bail!(
-            "unexpected installer output; expected {} artifacts but received {}",
-            platforms.len(),
-            paths.len()
-        );
-    }
-
     Ok(platforms.iter().copied().zip(paths).collect())
 }
 
@@ -314,21 +278,8 @@ fn create_build_context(
     environment_name: &str,
     oci_archive: PathBuf,
 ) -> Result<BuildContext> {
-    if installers.is_empty() {
-        bail!("no installers available to build container image");
-    }
-
     let dockerfile_path = context_dir.join("Dockerfile");
     let installers_dir = context_dir.join("installers");
-
-    if installers_dir.exists() {
-        fs::remove_dir_all(&installers_dir).with_context(|| {
-            format!(
-                "failed to remove stale installers directory {}",
-                installers_dir.display()
-            )
-        })?;
-    }
 
     fs::create_dir_all(&installers_dir).with_context(|| {
         format!(
@@ -338,22 +289,13 @@ fn create_build_context(
     })?;
 
     for (platform, source_path) in installers {
-        let spec = platform_to_runtime_spec(*platform)?;
+        let spec = runtime::platform_to_runtime_spec(*platform)?;
         let arch = spec
             .split('/')
             .nth(1)
             .ok_or_else(|| anyhow!("unsupported runtime specification '{spec}'"))?;
         let filename = format!("installer-{arch}");
         let staged_installer = installers_dir.join(&filename);
-
-        if staged_installer.exists() {
-            fs::remove_file(&staged_installer).with_context(|| {
-                format!(
-                    "failed to remove stale installer {}",
-                    staged_installer.display()
-                )
-            })?;
-        }
 
         fs::copy(source_path, &staged_installer).with_context(|| {
             format!(
@@ -428,13 +370,9 @@ async fn build_image(
     context: &BuildContext,
     platforms: &[Platform],
 ) -> Result<PathBuf> {
-    if platforms.is_empty() {
-        bail!("no target platforms provided for container build");
-    }
-
     let specs = platforms
         .iter()
-        .map(|platform| platform_to_runtime_spec(*platform).map(|spec| spec.to_string()))
+        .map(|platform| runtime::platform_to_runtime_spec(*platform).map(|spec| spec.to_string()))
         .collect::<Result<Vec<_>>>()?;
 
     let context_path = &context.dir;
@@ -458,7 +396,7 @@ async fn build_image(
         })?;
     }
 
-    match runtime.engine() {
+    match runtime.binary.engine() {
         RuntimeEngine::Docker => {
             build_with_docker(
                 runtime,
@@ -498,7 +436,7 @@ async fn build_with_docker(
     specs: &[String],
     output_path: &Path,
 ) -> Result<()> {
-    let mut cmd = Command::new(runtime.binary());
+    let mut cmd = Command::new(runtime.binary.binary());
     cmd.arg("buildx").arg("build");
     let combined = specs.join(",");
     cmd.arg("--platform").arg(combined);
@@ -524,7 +462,7 @@ async fn build_with_podman(
 
     podman_manifest_remove(runtime).await.ok();
 
-    let mut cmd = Command::new(runtime.binary());
+    let mut cmd = Command::new(runtime.binary.binary());
     cmd.arg("build")
         .arg("--platform")
         .arg(specs.join(","))
@@ -560,7 +498,7 @@ async fn podman_save_image(runtime: &RuntimeConfig, output_path: &Path) -> Resul
 
     let archive_spec = format!("oci-archive:{}", archive_path.to_string_lossy());
 
-    let mut cmd = Command::new(runtime.binary());
+    let mut cmd = Command::new(runtime.binary.binary());
     cmd.arg("manifest")
         .arg("push")
         .arg("--all")
@@ -571,19 +509,11 @@ async fn podman_save_image(runtime: &RuntimeConfig, output_path: &Path) -> Resul
 }
 
 async fn podman_manifest_remove(runtime: &RuntimeConfig) -> Result<()> {
-    let mut cmd = Command::new(runtime.binary());
+    let mut cmd = Command::new(runtime.binary.binary());
     cmd.arg("manifest").arg("rm").arg(&runtime.tag);
 
     runtime::run_command(&mut cmd, "podman manifest rm")
         .await
         .ok();
     Ok(())
-}
-
-fn format_platform_list(platforms: &[Platform]) -> String {
-    runtime::format_platform_list(platforms)
-}
-
-fn platform_to_runtime_spec(platform: Platform) -> Result<&'static str> {
-    runtime::platform_to_runtime_spec(platform)
 }

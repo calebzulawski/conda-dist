@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
+use rattler_conda_types::Platform;
 
 use crate::installer::InstallerPlatformSelection;
 
@@ -69,7 +70,7 @@ pub struct ContainerArgs {
 
     /// Restrict the build to a single target platform
     #[arg(long = "platform", value_name = "PLATFORM")]
-    pub platform: Option<String>,
+    pub platform: Option<Platform>,
 
     /// Path to the container engine binary (defaults to docker, then podman)
     #[arg(long = "engine", value_name = "PATH")]
@@ -100,7 +101,7 @@ pub struct PackageArgs {
 
     /// Restrict native packaging to specific target platform(s) (defaults to host platform)
     #[arg(long = "platform", value_name = "PLATFORM")]
-    pub platform: Vec<String>,
+    pub platform: Vec<Platform>,
 
     /// Output directory for generated packages (defaults to <manifest-dir>)
     #[arg(long = "output-dir", alias = "output", value_name = "PATH")]

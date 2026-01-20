@@ -6,13 +6,11 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use rattler_conda_types::{
-    ChannelConfig, MatchSpec, Matches, ParseStrictness, Platform, RepoDataRecord,
-};
+use rattler_conda_types::{MatchSpec, Matches, ParseStrictness, Platform, RepoDataRecord};
 use tempfile::TempDir;
 
 use crate::{
-    conda::{self, DEFAULT_CHANNEL, LOCKFILE_NAME},
+    conda::{self, LOCKFILE_NAME},
     downloader, installer,
     progress::Progress,
     workspace::Workspace,
@@ -52,14 +50,7 @@ pub async fn prepare_environment(
             )
         })?;
 
-    let channel_strings = if manifest_ctx.config.channels().is_empty() {
-        vec![DEFAULT_CHANNEL.to_string()]
-    } else {
-        manifest_ctx.config.channels().to_vec()
-    };
-
-    let channel_config = ChannelConfig::default_with_root_dir(manifest_ctx.manifest_dir.clone());
-    let channels = conda::parse_channels(&channel_strings, &channel_config)?;
+    let channels = manifest_ctx.config.channels()?;
 
     let specs = manifest_ctx.config.dependencies().to_match_specs()?;
     if specs.is_empty() {
@@ -74,7 +65,10 @@ pub async fn prepare_environment(
 
     let lockfile_path = manifest_ctx.lockfile_path();
     let lockfile_exists = lockfile_path.exists();
-    let solve_platforms_for_lock = conda::augment_with_noarch(&target_platforms);
+    let mut solve_platforms_for_lock = target_platforms.clone();
+    if !solve_platforms_for_lock.contains(&Platform::NoArch) {
+        solve_platforms_for_lock.push(Platform::NoArch);
+    }
     let existing_lock_records = if lockfile_exists {
         conda::load_locked_packages(&lockfile_path, &environment_name, &solve_platforms_for_lock)?
     } else {
@@ -111,7 +105,7 @@ pub async fn prepare_environment(
     let virtual_package_config = manifest_ctx.config.virtual_packages();
     let total_platforms = target_platforms.len();
     let solved_records = if lock_reused {
-        existing_lock_records.clone()
+        existing_lock_records
     } else {
         let locked_by_subdir_for_solve = build_locked_by_subdir(&existing_lock_records);
         let solve_step = progress.step("Solve environment");
@@ -127,7 +121,10 @@ pub async fn prepare_environment(
                     let mut combined = Vec::new();
                     let mut seen: HashSet<(String, String)> = HashSet::new();
                     for (index, platform) in target_platforms_for_solve.iter().enumerate() {
-                        let solve_platforms = conda::augment_with_noarch(&[*platform]);
+                        let mut solve_platforms = vec![*platform];
+                        if *platform != Platform::NoArch {
+                            solve_platforms.push(Platform::NoArch);
+                        }
                         let mut locked_for_platform = locked_by_subdir_for_solve
                             .get(platform.as_str())
                             .cloned()
@@ -181,7 +178,6 @@ pub async fn prepare_environment(
     let bundle_metadata = installer::PreparedBundleMetadata::from_config(
         &environment_name,
         manifest_ctx.config.metadata(),
-        &manifest_ctx.manifest_dir,
         &solved_records,
         manifest_ctx.config.author(),
     )?;
@@ -247,10 +243,7 @@ pub async fn execute_lock(
 ) -> Result<()> {
     let manifest_ctx = load_manifest_context(args.manifest)?;
     let workspace = Workspace::from_manifest_dir(&manifest_ctx.manifest_dir, work_dir)?;
-    let target_platforms = conda::resolve_target_platforms(manifest_ctx.config.platforms())?;
-    if target_platforms.is_empty() {
-        bail!("no target platforms specified");
-    }
+    let target_platforms = manifest_ctx.config.platforms().to_vec();
 
     let progress = Progress::stdout();
     let (prep, _, lock_reused) = prepare_environment(

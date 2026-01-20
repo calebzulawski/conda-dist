@@ -40,8 +40,6 @@ pub fn detect_virtual_packages_for_platform(
     }
     packages.archspec = Archspec::from_platform(platform);
 
-    apply_cross_platform_defaults(platform, &mut packages)?;
-
     if let Some(config) = overrides {
         apply_overrides(platform, &mut packages, config)?;
     }
@@ -107,41 +105,6 @@ fn parse_version(value: &str, name: &str, platform: Platform) -> Result<Version>
             platform.as_str()
         )
     })
-}
-
-fn apply_cross_platform_defaults(platform: Platform, packages: &mut VirtualPackages) -> Result<()> {
-    if platform.is_linux() {
-        if packages.linux.is_none() {
-            packages.linux = Some(Linux::from(parse_version(
-                DEFAULT_LINUX_VERSION,
-                "__linux",
-                platform,
-            )?));
-        }
-
-        if packages.libc.is_none() {
-            packages.libc = Some(LibC {
-                family: "glibc".into(),
-                version: parse_version(DEFAULT_GLIBC_VERSION, "__glibc", platform)?,
-            });
-        }
-    }
-
-    if platform.is_osx() && packages.osx.is_none() {
-        packages.osx = Some(Osx::from(parse_version(
-            DEFAULT_OSX_VERSION,
-            "__osx",
-            platform,
-        )?));
-    }
-
-    if platform.is_windows() && packages.win.is_none() {
-        packages.win = Some(Windows {
-            version: Some(parse_version(DEFAULT_WINDOWS_VERSION, "__win", platform)?),
-        });
-    }
-
-    Ok(())
 }
 
 const DEFAULT_LINUX_VERSION: &str = "5.4";

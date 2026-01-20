@@ -8,7 +8,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: "1.91.0"
+  RUST_VERSION: "1.92.0"
+  CROSS_REV: "846d469b1f08d49429d4ca834ee5a60f5d055e19"
 
 jobs:
   fmt-lint:
@@ -64,7 +65,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
       - name: Install cross
-        run: cargo install cross --git https://github.com/cross-rs/cross --locked
+        run: cargo install cross --git https://github.com/cross-rs/cross --rev $CROSS_REV --locked
         if: ${{ matrix.cargo == 'cross' }}
       - name: Run release bootstrap script
         run: ./scripts/bootstrap-release.sh
@@ -111,7 +112,7 @@ jobs:
         with:
           key: ${{ matrix.platform }}
       - name: Install cross
-        run: cargo install cross --git https://github.com/cross-rs/cross --locked
+        run: cargo install cross --git https://github.com/cross-rs/cross --rev $CROSS_REV --locked
         if: ${{ matrix.cargo == 'cross' }}
       - name: Download bootstrapped installers
         uses: actions/download-artifact@v5

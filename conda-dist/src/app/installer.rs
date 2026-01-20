@@ -1,8 +1,8 @@
 use std::{env, path::PathBuf, time::Duration};
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 
-use crate::{cli::InstallerArgs, conda, installer, progress::Progress, workspace::Workspace};
+use crate::{cli::InstallerArgs, installer, progress::Progress, workspace::Workspace};
 
 use super::{
     LockMode, context::load_manifest_context, environment::prepare_environment,
@@ -31,10 +31,7 @@ pub async fn execute(
     };
     let script_path = installer::resolve_script_path(requested_path, environment_name)?;
 
-    let target_platforms = conda::resolve_target_platforms(manifest_ctx.config.platforms())?;
-    if target_platforms.is_empty() {
-        bail!("no target platforms specified");
-    }
+    let target_platforms = manifest_ctx.config.platforms().to_vec();
 
     let progress = Progress::stdout();
     let mut final_messages = Vec::new();
