@@ -160,10 +160,6 @@ pub async fn execute(
     let mut seen = HashSet::new();
     requested_platforms.retain(|platform| seen.insert(*platform));
 
-    if requested_platforms.is_empty() {
-        bail!("no target platforms selected");
-    }
-
     for platform in &requested_platforms {
         ensure_linux_package_platform(*platform)?;
     }
@@ -618,7 +614,7 @@ fn rpm_arch(platform: Platform) -> Result<&'static str> {
         Platform::LinuxS390X => Ok("s390x"),
         Platform::LinuxArmV7l => Ok("armv7hl"),
         Platform::Linux32 => Ok("i686"),
-        other => bail!(
+        other => unreachable!(
             "platform '{}' is not supported for RPM packaging",
             other.as_str()
         ),
@@ -633,7 +629,7 @@ fn deb_arch(platform: Platform) -> Result<&'static str> {
         Platform::LinuxS390X => Ok("s390x"),
         Platform::LinuxArmV7l => Ok("armhf"),
         Platform::Linux32 => Ok("i386"),
-        other => bail!(
+        other => unreachable!(
             "platform '{}' is not supported for DEB packaging",
             other.as_str()
         ),

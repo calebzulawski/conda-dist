@@ -1,6 +1,6 @@
 use std::{env, path::PathBuf, time::Duration};
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 
 use crate::{cli::InstallerArgs, installer, progress::Progress, workspace::Workspace};
 

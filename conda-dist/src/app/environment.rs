@@ -105,7 +105,7 @@ pub async fn prepare_environment(
     let virtual_package_config = manifest_ctx.config.virtual_packages();
     let total_platforms = target_platforms.len();
     let solved_records = if lock_reused {
-        existing_lock_records.clone()
+        existing_lock_records
     } else {
         let locked_by_subdir_for_solve = build_locked_by_subdir(&existing_lock_records);
         let solve_step = progress.step("Solve environment");

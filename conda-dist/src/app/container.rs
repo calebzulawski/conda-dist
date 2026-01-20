@@ -40,7 +40,6 @@ pub async fn execute(
     let workspace = Workspace::from_manifest_dir(&manifest_ctx.manifest_dir, work_dir)?;
 
     let target_platforms = resolve_target_platforms(&manifest_ctx, platform)?;
-    ensure_linux_platforms(&target_platforms)?;
 
     let runtime_binary = runtime::resolve_runtime(engine)?;
     let image_tag = derive_image_tag(&manifest_ctx, &container_cfg)?;
@@ -148,6 +147,12 @@ fn resolve_target_platforms(
     requested: Option<Platform>,
 ) -> Result<Vec<Platform>> {
     if let Some(platform) = requested {
+        if !is_linux_platform(platform) {
+            bail!(
+                "container builds are only supported for linux platforms (received '{}')",
+                platform.as_str()
+            );
+        }
         Ok(vec![platform])
     } else {
         let platforms = manifest_ctx.config.platforms().to_vec();
@@ -162,20 +167,6 @@ fn resolve_target_platforms(
 
         Ok(linux_platforms)
     }
-}
-
-fn ensure_linux_platforms(platforms: &[Platform]) -> Result<()> {
-    if let Some(non_linux) = platforms
-        .iter()
-        .find(|platform| !is_linux_platform(**platform))
-    {
-        bail!(
-            "container builds are only supported for linux platforms (received '{}')",
-            non_linux.as_str()
-        );
-    }
-
-    Ok(())
 }
 
 fn is_linux_platform(platform: Platform) -> bool {
@@ -295,21 +286,8 @@ fn create_build_context(
     environment_name: &str,
     oci_archive: PathBuf,
 ) -> Result<BuildContext> {
-    if installers.is_empty() {
-        bail!("no installers available to build container image");
-    }
-
     let dockerfile_path = context_dir.join("Dockerfile");
     let installers_dir = context_dir.join("installers");
-
-    if installers_dir.exists() {
-        fs::remove_dir_all(&installers_dir).with_context(|| {
-            format!(
-                "failed to remove stale installers directory {}",
-                installers_dir.display()
-            )
-        })?;
-    }
 
     fs::create_dir_all(&installers_dir).with_context(|| {
         format!(
