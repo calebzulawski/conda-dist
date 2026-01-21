@@ -2,7 +2,24 @@ pub mod container;
 pub mod context;
 pub mod environment;
 pub mod installer;
+#[cfg(unix)]
 mod package;
+#[cfg(not(unix))]
+mod package {
+    use anyhow::{Result, bail};
+
+    use crate::cli::PackageArgs;
+
+    use super::LockMode;
+
+    pub async fn execute(
+        _args: PackageArgs,
+        _work_dir: Option<std::path::PathBuf>,
+        _lock_mode: LockMode,
+    ) -> Result<()> {
+        bail!("native package builds are only supported on unix platforms");
+    }
+}
 mod runtime;
 
 use anyhow::Result;

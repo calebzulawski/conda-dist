@@ -211,6 +211,15 @@ jobs:
     name: Build example native packages
     needs: build-release
     runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        platform:
+          - linux-64
+        manifest:
+          - path: examples/bash.toml
+            artifact_prefix: native-packages
+          - path: examples/bash-split-deps.toml
+            artifact_prefix: native-packages-split
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -226,14 +235,14 @@ jobs:
           RPM_IMAGE: redhat/ubi10
           DEB_IMAGE: ubuntu:24.04
         run: |
-          release/conda-dist package examples/bash.toml \
+          release/conda-dist package ${{ matrix.manifest.path }} \
             --rpm-image "$RPM_IMAGE" \
             --deb-image "$DEB_IMAGE" \
             --output-dir native-packages
       - name: Upload native packages
         uses: actions/upload-artifact@v4
         with:
-          name: native-packages-linux-64
+          name: ${{ matrix.manifest.artifact_prefix }}-${{ matrix.platform }}
           path: native-packages
           if-no-files-found: error
 
@@ -276,30 +285,28 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - format: rpm
+        platform:
+          - platform: linux-64
             container: redhat/ubi10
-            package_dir: native-packages/redhat_ubi10
-            package_ext: rpm
             install: dnf install -y
-          - format: deb
+            package_subdir: redhat-ubi10
+          - platform: linux-64
             container: ubuntu:24.04
-            package_dir: native-packages/ubuntu_24_04
-            package_ext: deb
             install: apt install -y
-    container: ${{ matrix.container }}
+            package_subdir: ubuntu-24.04
+        artifact:
+          - native-packages
+          - native-packages-split
+    container: ${{ matrix.platform.container }}
     steps:
       - name: Download native packages
         uses: actions/download-artifact@v5
         with:
-          name: native-packages-linux-64
+          name: ${{ matrix.artifact }}-${{ matrix.platform.platform }}
           path: native-packages
       - name: Install package
         run: |
-          PACKAGE=$(find "$GITHUB_WORKSPACE/${{ matrix.package_dir }}" -name "*.${{ matrix.package_ext }}")
-          echo $PACKAGE
-          test -f $PACKAGE
-          ${{ matrix.install }} $PACKAGE
+          ${{ matrix.platform.install }} "$GITHUB_WORKSPACE"/native-packages/${{ matrix.platform.package_subdir }}/*
       - name: Run package test
         run: /opt/portable-bash/bin/bash --version
 
