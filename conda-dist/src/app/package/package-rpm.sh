@@ -73,10 +73,18 @@ while IFS=$'\t' read -r name payload_mode spec_rel topdir_rel release filelist_r
             "$PKG_INSTALLER" "$PKG_PREFIX"
             installed=1
         fi
+        payload_root="$TOPDIR/SOURCES/payload-root"
+        rm -rf "$payload_root"
+        mkdir -p "$payload_root"
         if [ "$payload_mode" = "files" ] && [ "$filelist_rel" != "-" ]; then
-            tar -C / -czf "$TOPDIR/SOURCES/payload.tar.gz" --files-from "$PKG_PACKAGING_ROOT/$filelist_rel"
+            while IFS= read -r relpath; do
+                [ -n "$relpath" ] || continue
+                mkdir -p "$payload_root/$(dirname "$relpath")"
+                cp -a "/$relpath" "$payload_root/$relpath"
+            done < "$PKG_PACKAGING_ROOT/$filelist_rel"
         else
-            tar -C / -czf "$TOPDIR/SOURCES/payload.tar.gz" "${PKG_PREFIX#/}"
+            mkdir -p "$payload_root$PKG_PREFIX"
+            cp -a "$PKG_PREFIX"/. "$payload_root$PKG_PREFIX"/
         fi
     fi
 

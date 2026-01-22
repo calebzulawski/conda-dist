@@ -3,7 +3,7 @@ Version: {{ version|native_version }}
 Release: %{?conda_dist_release}%{!?conda_dist_release:1}%{?dist}
 Summary: {{ summary|rpm_escape }}
 License: {{ license }}
-Source0: payload.tar.gz
+Source0: payload-root
 BuildArch: {{ arch }}
 AutoReqProv: no
 {% if !dependencies.is_empty() %}
@@ -30,9 +30,7 @@ Provides: {{ provide }}
 # nothing to do
 
 %install
-rm -rf %{buildroot}
-mkdir -p %{buildroot}
-tar -xzf %{SOURCE0} -C %{buildroot}
+cp -a %{_sourcedir}/payload-root/. %{buildroot}/
 
 %files
 %defattr(-,root,root,-)
