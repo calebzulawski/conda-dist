@@ -210,23 +210,26 @@ jobs:
   build-native-packages:
     name: Build example native packages
     needs: build-release
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.platform.os }}
     strategy:
       matrix:
-        platform:
-          - linux-64
         manifest:
           - path: examples/bash.toml
-            artifact_prefix: native-packages
+            artifact: native-packages
           - path: examples/bash-split-deps.toml
-            artifact_prefix: native-packages-split
+            artifact: native-packages-split
+        platform:
+          - os: ubuntu-24.04
+            platform: linux-64
+          - os: ubuntu-24.04-arm
+            platform: linux-aarch64
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
       - name: Download conda-dist
         uses: actions/download-artifact@v5
         with:
-          name: conda-dist-linux-64
+          name: conda-dist-${{ matrix.platform.platform }}
           path: release
       - name: Make conda-dist executable
         run: chmod +x release/conda-dist
@@ -242,7 +245,7 @@ jobs:
       - name: Upload native packages
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.manifest.artifact_prefix }}-${{ matrix.platform }}
+          name: ${{ matrix.manifest.artifact }}-${{ matrix.platform.platform }}
           path: native-packages
           if-no-files-found: error
 
@@ -281,23 +284,26 @@ jobs:
   test-native-packages:
     name: Test example native packages
     needs: build-native-packages
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.platform.os }}
     strategy:
       fail-fast: false
       matrix:
-        platform:
-          - platform: linux-64
-            container: redhat/ubi10
-            install: dnf install -y
+        image:
+          - container: redhat/ubi10
             package_subdir: redhat-ubi10
-          - platform: linux-64
-            container: ubuntu:24.04
-            install: apt install -y
+            install: dnf install -y
+          - container: ubuntu:24.04
             package_subdir: ubuntu-24.04
+            install: apt install -y
+        platform:
+          - os: ubuntu-24.04
+            platform: linux-64
+          - os: ubuntu-24.04-arm
+            platform: linux-aarch64
         artifact:
           - native-packages
           - native-packages-split
-    container: ${{ matrix.platform.container }}
+    container: ${{ matrix.image.container }}
     steps:
       - name: Download native packages
         uses: actions/download-artifact@v5
@@ -306,7 +312,7 @@ jobs:
           path: native-packages
       - name: Install package
         run: |
-          ${{ matrix.platform.install }} "$GITHUB_WORKSPACE"/native-packages/${{ matrix.platform.package_subdir }}/*
+          ${{ matrix.image.install }} $GITHUB_WORKSPACE/native-packages/${{ matrix.image.package_subdir }}/*
       - name: Run package test
         run: /opt/portable-bash/bin/bash --version
 
