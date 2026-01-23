@@ -1,0 +1,15 @@
+Package: {{ name }}
+Version: {{ version|native_version }}-{{ build|deb_release }}{{ extra_build|deb_release }}
+Section: misc
+Priority: optional
+Architecture: {{ arch }}
+Maintainer: {{ author }}
+{%- if !dependencies.is_empty() %}
+Depends:{% for dep in dependencies %}{% if !loop.first %}, {% endif %}{{ dep.name.as_normalized() }} (= {{ dep.version|native_version }}-{{ dep.build|deb_release }}){% endfor %}{% if !extra_depends.is_empty() %}, {% for dep in extra_depends %}{% if !loop.first %}, {% endif %}{{ dep }}{% endfor %}{% endif %}
+{%- elif !extra_depends.is_empty() %}
+Depends:{% for dep in extra_depends %}{% if !loop.first %}, {% endif %}{{ dep }}{% endfor %}
+{%- endif %}
+{%- if !provides.is_empty() %}
+Provides: {% for provide in provides %}{% if !loop.first %}, {% endif %}{{ provide }}{% endfor %}
+{%- endif %}
+{{ description_parts|deb_description(summary) }}

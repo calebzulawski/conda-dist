@@ -1,0 +1,25 @@
+name = "portable-bash"
+version = "1.0.0"
+author = "Example Maintainers"
+license = "Proprietary"
+channels = ["conda-forge"]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64"]
+
+[container]
+tag_template = "registry.example.com/example/{name}:{version}"
+
+[dependencies]
+bash = "*"
+
+[package]
+split_deps = true
+release = "1"
+
+[metadata]
+summary = "Portable Bash"
+description = "A self-contained Bash shell"
+release_notes = """
+- Initial portable release of the bash environment.
+- Includes GNU bash and its runtime dependencies from conda-forge.
+"""
+featured_packages = ["bash"]

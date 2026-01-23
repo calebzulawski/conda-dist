@@ -1,0 +1,41 @@
+Name: {{ name }}
+Version: {{ version|native_version }}
+Release: %{?conda_dist_release}{{ extra_build|rpm_release }}%{?dist}
+Summary: {{ summary|rpm_escape }}
+License: {{ license }}
+Source0: payload-root
+BuildArch: {{ arch }}
+AutoReqProv: no
+%define __brp_mangle_shebangs /bin/true
+%define __brp_check_rpaths /bin/true
+{% if !dependencies.is_empty() %}
+{% for dep in dependencies %}
+Requires: {{ dep.name.as_normalized() }} = {{ dep.version|native_version }}-{{ dep.build|rpm_release }}%{?dist}
+{% endfor %}
+{% endif %}
+{% if is_split %}
+Requires: {{ lock_name }}
+{% endif %}
+{% if !provides.is_empty() %}
+{% for provide in provides %}
+Provides: {{ provide }}
+{% endfor %}
+{% endif %}
+
+%description
+{{ description_parts|join_paragraphs|rpm_escape }}
+
+%prep
+# nothing to do
+
+%build
+# nothing to do
+
+%install
+cp -a %{_sourcedir}/payload-root/. %{buildroot}/
+
+%files
+%defattr(-,root,root,-)
+{{ prefix }}
+
+%changelog

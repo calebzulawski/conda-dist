@@ -9,17 +9,14 @@ use rattler_conda_types::Platform;
 use tokio::process::Command;
 
 use crate::{
-    cli::ContainerArgs,
-    config::ContainerConfig,
-    installer,
-    progress::{Progress, ProgressCounter},
+    cli::ContainerArgs, config::ContainerConfig, installer, progress::Progress,
     workspace::Workspace,
 };
 
 use super::{
     LockMode,
     context::{ManifestContext, load_manifest_context},
-    environment::{EnvironmentPreparation, prepare_environment},
+    environment::prepare_environment,
     runtime::{self, RuntimeBinary, RuntimeEngine},
 };
 
@@ -86,7 +83,18 @@ pub async fn execute(
             {
                 move |handle| async move {
                     let mut counter = handle.counter(total_installers);
-                    prepare_self_extracting_installers(&mut counter, prep_ref, &installer_platforms)
+                    let installer_dir = prep_ref.staging_dir.path().join("installers");
+                    let paths = installer::create_installers(
+                        &installer_dir,
+                        &prep_ref.environment_name,
+                        &prep_ref.channel_dir,
+                        &installer_platforms,
+                        &prep_ref.bundle_metadata,
+                        &mut counter,
+                    )?;
+                    let installers: Vec<(Platform, PathBuf)> =
+                        installer_platforms.iter().copied().zip(paths).collect();
+                    Ok(installers)
                 }
             },
             move |_| installer_label.clone(),
@@ -209,32 +217,6 @@ fn derive_image_tag(
     }
 
     Ok(tag.to_string())
-}
-
-fn prepare_self_extracting_installers(
-    progress: &mut ProgressCounter,
-    prep: &EnvironmentPreparation,
-    platforms: &[Platform],
-) -> Result<Vec<(Platform, PathBuf)>> {
-    let installer_dir = prep.staging_dir.path().join("installers");
-    fs::create_dir_all(&installer_dir).with_context(|| {
-        format!(
-            "failed to prepare installer staging directory {}",
-            installer_dir.display()
-        )
-    })?;
-
-    let result = installer::create_installers(
-        &installer_dir,
-        &prep.environment_name,
-        &prep.channel_dir,
-        platforms,
-        &prep.bundle_metadata,
-        progress,
-    );
-    let paths = result?;
-
-    Ok(platforms.iter().copied().zip(paths).collect())
 }
 
 fn prepare_build_directory(workspace: &Workspace, environment_name: &str) -> Result<PathBuf> {

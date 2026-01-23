@@ -10,6 +10,8 @@ manifest.
 - `version` — ASCII string without whitespace. Appended to artifact names and
   container tags.
 - `author` — Free-form maintainer identifier bundled into metadata.
+- `license` — License identifier embedded in native package metadata. Defaults
+  to `Proprietary` if omitted.
 - `channels` — Non-empty array of Conda channels evaluated in order of
   precedence.
 - `platforms` — Non-empty array of Conda platforms (for example `linux-64`,
@@ -55,3 +57,18 @@ cuda = "12.2"
 Use the `default` table for cross-platform values and add per-platform tables to
 override individual targets. Supported keys are `linux`, `osx`, `win`, `libc`,
 and `cuda`.
+
+## Package settings
+
+Configure native RPM/DEB packaging:
+
+```toml
+[package]
+split_deps = false
+release = "1"
+```
+
+When enabled, `split_deps` emits a metapackage plus individual native packages
+for each transitive dependency.
+The optional `release` field controls the RPM/DEB release suffix applied to the
+base package (defaults to `1`).

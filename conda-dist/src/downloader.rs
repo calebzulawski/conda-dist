@@ -13,7 +13,7 @@ use indicatif::ProgressBar;
 use rattler_conda_types::{Platform, RepoDataRecord};
 use rattler_digest::{Sha256, Sha256Hash, compute_bytes_digest};
 use rattler_index::{IndexFsConfig, index_fs};
-use reqwest::Client;
+use rattler_networking::LazyClient;
 use tokio::fs;
 
 const MAX_PARALLEL_DOWNLOADS: usize = 8;
@@ -78,10 +78,7 @@ pub async fn download_and_stage_packages(
         });
     }
 
-    let client = Client::builder()
-        .user_agent("conda-dist/0.1.0")
-        .build()
-        .context("failed to construct HTTP client")?;
+    let client = crate::conda::authenticated_client()?;
 
     let completed = Arc::new(AtomicUsize::new(0));
     let fetched = Arc::new(AtomicUsize::new(0));
@@ -121,7 +118,7 @@ pub async fn download_and_stage_packages(
 }
 
 struct StageContext {
-    client: Client,
+    client: LazyClient,
     channel_dir: PathBuf,
     cache_dir: PathBuf,
     progress: ProgressBar,
@@ -132,7 +129,7 @@ struct StageContext {
 
 impl StageContext {
     fn new(
-        client: Client,
+        client: LazyClient,
         channel_dir: PathBuf,
         cache_dir: PathBuf,
         progress: ProgressBar,
@@ -220,7 +217,7 @@ async fn verify_cached_package(path: &Path, expected: Option<Sha256Hash>) -> Res
 }
 
 async fn download_to_cache(
-    client: &Client,
+    client: &LazyClient,
     url: &str,
     cached_path: &Path,
     sha256: Option<Sha256Hash>,
@@ -233,6 +230,7 @@ async fn download_to_cache(
     }
 
     let response = client
+        .client()
         .get(url)
         .send()
         .await

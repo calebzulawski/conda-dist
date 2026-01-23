@@ -8,6 +8,8 @@ use serde::Deserialize;
 pub struct CondaDistConfig {
     name: String,
     author: String,
+    #[serde(default = "default_license")]
+    license: String,
     version: String,
     channels: Vec<String>,
     platforms: Vec<Platform>,
@@ -16,6 +18,8 @@ pub struct CondaDistConfig {
     metadata: Option<BundleMetadataConfig>,
     #[serde(default)]
     container: Option<ContainerConfig>,
+    #[serde(default)]
+    package: Option<PackageConfig>,
     #[serde(default)]
     virtual_packages: Option<VirtualPackagesConfig>,
     #[serde(skip, default = "default_channel_config")]
@@ -29,6 +33,10 @@ impl CondaDistConfig {
 
     pub fn author(&self) -> &str {
         &self.author
+    }
+
+    pub fn license(&self) -> &str {
+        &self.license
     }
 
     pub fn version(&self) -> &str {
@@ -62,6 +70,17 @@ impl CondaDistConfig {
         self.container.as_ref()
     }
 
+    pub fn package(&self) -> Option<&PackageConfig> {
+        self.package.as_ref()
+    }
+
+    pub fn package_release(&self) -> &str {
+        self.package
+            .as_ref()
+            .map(|cfg| cfg.release.as_str())
+            .unwrap_or("1")
+    }
+
     pub fn virtual_packages(&self) -> Option<&VirtualPackagesConfig> {
         self.virtual_packages.as_ref()
     }
@@ -82,6 +101,9 @@ impl CondaDistConfig {
         }
         if self.author.trim().is_empty() {
             bail!("manifest field 'author' must not be empty");
+        }
+        if self.license.trim().is_empty() {
+            bail!("manifest field 'license' must not be empty");
         }
         if self.version.trim().is_empty() {
             bail!("manifest field 'version' must not be empty");
@@ -162,6 +184,14 @@ pub struct ContainerConfig {
     pub tag_template: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PackageConfig {
+    #[serde(default)]
+    pub split_deps: bool,
+    #[serde(default = "default_package_release")]
+    pub release: String,
+}
+
 impl Default for ContainerConfig {
     fn default() -> Self {
         Self {
@@ -178,6 +208,14 @@ fn default_base_image() -> String {
 
 fn default_tag_template() -> String {
     "{name}:{version}".to_string()
+}
+
+fn default_license() -> String {
+    "Proprietary".to_string()
+}
+
+fn default_package_release() -> String {
+    "1".to_string()
 }
 
 fn default_channel_config() -> ChannelConfig {

@@ -8,6 +8,7 @@ containers, or other outputs. A minimal manifest looks like:
 name = "myapp"
 version = "1.2.0"
 author = "John Doe"
+license = "Proprietary"
 channels = ["conda-forge"]
 platforms = ["linux-64", "osx-arm64"]
 
