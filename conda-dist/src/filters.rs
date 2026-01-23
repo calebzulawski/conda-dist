@@ -75,7 +75,7 @@ fn normalize_release(build: &str, allowed: impl Fn(char) -> bool) -> String {
     }
     let trimmed = out.trim_matches('.');
     if trimmed.is_empty() {
-        "1".to_string()
+        String::new()
     } else {
         trimmed.to_string()
     }

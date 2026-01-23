@@ -1,6 +1,6 @@
 Name: {{ name }}
 Version: {{ version|native_version }}
-Release: %{?conda_dist_release}%{!?conda_dist_release:1}{{ extra_build|rpm_release }}%{?dist}
+Release: %{?conda_dist_release}{{ extra_build|rpm_release }}%{?dist}
 Summary: {{ summary|rpm_escape }}
 License: {{ license }}
 BuildArch: {{ arch }}
