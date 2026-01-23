@@ -45,7 +45,7 @@ pub async fn collect_dependencies(
     let python_info = resolve_python_noarch_info(selected.values(), platform);
 
     let package_cache = PackageCache::new(workspace.package_cache_dir());
-    let client = LazyClient::default();
+    let client = conda::authenticated_client()?;
 
     let mut dependencies = Vec::new();
     for (_normalized, record) in selected {
