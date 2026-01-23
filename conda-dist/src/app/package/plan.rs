@@ -150,9 +150,8 @@ pub fn write_package_plan(
     lines.push(base_line);
 
     for dependency in dependency_packages {
-        let line = write_dependency_entry(
-            &layout, dependency, env_name, &author, &prefix, license, platform,
-        )?;
+        let line =
+            write_dependency_entry(&layout, dependency, env_name, &author, &prefix, license)?;
         lines.push(line);
     }
 
@@ -207,7 +206,6 @@ fn write_dependency_entry(
     author: &str,
     prefix: &str,
     license: &str,
-    platform: Platform,
 ) -> Result<String> {
     let package_name = split_package_name(
         env_name,
@@ -221,14 +219,7 @@ fn write_dependency_entry(
     match layout.format {
         PackageFormat::Rpm => {
             let spec_path = layout.specs_dir.join(format!("{package_name}.spec"));
-            render::write_sub_rpm_spec(
-                &spec_path,
-                dependency,
-                &package_name,
-                license,
-                prefix,
-                platform,
-            )?;
+            render::write_sub_rpm_spec(&spec_path, dependency, &package_name, license, prefix)?;
             let topdir = layout.topdir_dir.clone();
             Ok(format!(
                 "{}\t{}\t{}\t{}\t{}\t{}",
@@ -242,13 +233,7 @@ fn write_dependency_entry(
         }
         PackageFormat::Deb => {
             let control_path = layout.controls_dir.join(format!("{package_name}.control"));
-            render::write_sub_deb_control(
-                &control_path,
-                dependency,
-                &package_name,
-                author,
-                platform,
-            )?;
+            render::write_sub_deb_control(&control_path, dependency, &package_name, author)?;
             let root = layout.roots_dir.join(&package_name);
             Ok(format!(
                 "{}\t{}\t{}\t{}\t-\t{}",

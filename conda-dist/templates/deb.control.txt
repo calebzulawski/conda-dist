@@ -1,5 +1,5 @@
 Package: {{ name }}
-Version: {{ version|native_version }}-{{ build|deb_release }}
+Version: {{ version|native_version }}-{{ build|deb_release }}{{ extra_build|deb_release }}
 Section: misc
 Priority: optional
 Architecture: {{ arch }}

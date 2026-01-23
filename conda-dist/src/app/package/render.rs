@@ -1,6 +1,7 @@
 //! Render RPM specs, DEB control files, and container helper scripts.
 
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use crate::filters;
 use anyhow::Result;
@@ -20,6 +21,7 @@ const DEB_SCRIPT_NAME: &str = "package-deb.sh";
 struct RpmSpecPayloadTemplate<'a> {
     name: &'a str,
     version: String,
+    extra_build: String,
     summary: String,
     description_parts: Vec<String>,
     dependencies: Vec<rattler_conda_types::PackageRecord>,
@@ -36,6 +38,7 @@ struct RpmSpecPayloadTemplate<'a> {
 struct RpmSpecNoPayloadTemplate<'a> {
     name: &'a str,
     version: String,
+    extra_build: String,
     summary: String,
     description_parts: Vec<String>,
     dependencies: Vec<rattler_conda_types::PackageRecord>,
@@ -52,6 +55,7 @@ struct DebControlTemplate<'a> {
     name: &'a str,
     version: String,
     build: String,
+    extra_build: String,
     summary: String,
     description_parts: Vec<String>,
     dependencies: Vec<rattler_conda_types::PackageRecord>,
@@ -77,6 +81,7 @@ pub fn write_script(format: PackageFormat, root: &Path) -> Result<PathBuf> {
 pub fn arch(format: PackageFormat, platform: Platform) -> Result<String> {
     Ok(match format {
         PackageFormat::Rpm => match platform {
+            Platform::NoArch => "noarch",
             Platform::Linux64 => "x86_64",
             Platform::LinuxAarch64 => "aarch64",
             Platform::LinuxPpc64le => "ppc64le",
@@ -89,6 +94,7 @@ pub fn arch(format: PackageFormat, platform: Platform) -> Result<String> {
             ),
         },
         PackageFormat::Deb => match platform {
+            Platform::NoArch => "all",
             Platform::Linux64 => "amd64",
             Platform::LinuxAarch64 => "arm64",
             Platform::LinuxPpc64le => "ppc64el",
@@ -117,6 +123,7 @@ pub(crate) fn write_base_rpm_spec(
         RpmSpecPayloadTemplate {
             name: base.env_name,
             version: base.version.to_string(),
+            extra_build: String::new(),
             summary: base.summary.to_string(),
             description_parts: base.description_parts.to_vec(),
             dependencies: base.dependencies.to_vec(),
@@ -132,6 +139,7 @@ pub(crate) fn write_base_rpm_spec(
         RpmSpecNoPayloadTemplate {
             name: base.env_name,
             version: base.version.to_string(),
+            extra_build: String::new(),
             summary: base.summary.to_string(),
             description_parts: base.description_parts.to_vec(),
             dependencies: base.dependencies.to_vec(),
@@ -154,18 +162,20 @@ pub(crate) fn write_sub_rpm_spec(
     name: &str,
     license: &str,
     prefix: &str,
-    platform: Platform,
 ) -> Result<()> {
-    let arch = arch(PackageFormat::Rpm, platform)?;
+    let subdir_platform = Platform::from_str(&sub.record.package_record.subdir)?;
+    let arch = arch(PackageFormat::Rpm, subdir_platform)?;
     let (summary, description_parts) = sub_summary_parts(sub);
     let dependencies = Vec::new();
     let provides = Vec::new();
     let version = sub.record.package_record.version.to_string();
+    let extra_build = sub_extra_build(sub);
     let is_split = true;
     let lock_name = format!("lock-{name}");
     let rendered = RpmSpecPayloadTemplate {
         name,
         version,
+        extra_build,
         summary,
         description_parts,
         dependencies,
@@ -193,6 +203,7 @@ pub(crate) fn write_base_deb_control(
         name: base.env_name,
         version: base.version.to_string(),
         build,
+        extra_build: String::new(),
         summary: base.summary.to_string(),
         description_parts: base.description_parts.to_vec(),
         dependencies: base.dependencies.to_vec(),
@@ -212,18 +223,20 @@ pub(crate) fn write_sub_deb_control(
     sub: &DependencyPackage,
     name: &str,
     author: &str,
-    platform: Platform,
 ) -> Result<()> {
-    let arch = arch(PackageFormat::Deb, platform)?;
+    let subdir_platform = Platform::from_str(&sub.record.package_record.subdir)?;
+    let arch = arch(PackageFormat::Deb, subdir_platform)?;
     let (summary, description_parts) = sub_summary_parts(sub);
     let provides = Vec::new();
     let version = sub.record.package_record.version.to_string();
     let build = sub.record.package_record.build.clone();
+    let extra_build = sub_extra_build(sub);
     let extra_depends = vec![format!("lock-{name}")];
     let control = DebControlTemplate {
         name,
         version,
         build,
+        extra_build,
         summary,
         description_parts,
         dependencies: Vec::new(),
@@ -244,4 +257,11 @@ fn sub_summary_parts(sub: &DependencyPackage) -> (String, Vec<String>) {
     );
     let description_parts = vec![summary.clone()];
     (summary, description_parts)
+}
+
+fn sub_extra_build(sub: &DependencyPackage) -> String {
+    sub.extra_build
+        .as_ref()
+        .map(|extra| format!("_{extra}"))
+        .unwrap_or_default()
 }

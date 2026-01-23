@@ -37,6 +37,7 @@ pub struct PackageResult {
 pub struct DependencyPackage {
     pub record: RepoDataRecord,
     pub files: Vec<PathBuf>,
+    pub extra_build: Option<String>,
 }
 
 /// Return the author string formatted for package metadata.

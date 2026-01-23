@@ -163,19 +163,11 @@ pub async fn execute(
 
     let mut platform_batches = Vec::new();
     for platform in &prep.target_platforms {
-        let dependency_inputs = if split_deps {
+        let dependency_packages = if split_deps {
             collect_dependencies(&manifest_ctx, &prep, &workspace, *platform).await?
         } else {
             Vec::new()
         };
-
-        let dependency_packages = dependency_inputs
-            .iter()
-            .map(|(record, files)| DependencyPackage {
-                record: record.clone(),
-                files: files.clone(),
-            })
-            .collect::<Vec<_>>();
 
         platform_batches.push(PlatformBatch {
             platform: *platform,

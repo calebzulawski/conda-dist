@@ -1,11 +1,13 @@
 Name: {{ name }}
 Version: {{ version|native_version }}
-Release: %{?conda_dist_release}%{!?conda_dist_release:1}%{?dist}
+Release: %{?conda_dist_release}%{!?conda_dist_release:1}{{ extra_build|rpm_release }}%{?dist}
 Summary: {{ summary|rpm_escape }}
 License: {{ license }}
 Source0: payload-root
 BuildArch: {{ arch }}
 AutoReqProv: no
+%define __brp_mangle_shebangs /bin/true
+%define __brp_check_rpaths /bin/true
 {% if !dependencies.is_empty() %}
 {% for dep in dependencies %}
 Requires: {{ dep.name.as_normalized() }} = {{ dep.version|native_version }}-{{ dep.build|rpm_release }}%{?dist}
@@ -35,3 +37,5 @@ cp -a %{_sourcedir}/payload-root/. %{buildroot}/
 %files
 %defattr(-,root,root,-)
 {{ prefix }}
+
+%changelog
