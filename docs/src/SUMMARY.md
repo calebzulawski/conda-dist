@@ -14,3 +14,8 @@
   - [conda-dist installer](./cli/conda-dist-installer.md)
   - [conda-dist lock](./cli/conda-dist-lock.md)
   - [conda-dist package](./cli/conda-dist-package.md)
+- [Developer Notes](./developer/index.md)
+  - [Packaging Architecture](./developer/packaging.md)
+    - [Self-Extracting Installer](./developer/packaging/installers.md)
+    - [OCI/Docker Images](./developer/packaging/containers.md)
+    - [Native Packages (RPM/DEB)](./developer/packaging/native-packages.md)
