@@ -15,7 +15,6 @@ use tempfile::TempDir;
 use url::Url;
 
 const DEFAULT_LOCKFILE_NAME: &str = "conda-lock.yml";
-const BUNDLE_METADATA_FILE: &str = "bundle-metadata.json";
 
 pub struct BundleData {
     pub channel_dir: PathBuf,
@@ -35,30 +34,10 @@ pub struct BundleMetadata {
     #[serde(default)]
     pub release_notes: Option<String>,
     #[serde(default)]
-    pub featured_packages: Vec<FeaturedPackage>,
+    pub featured_packages: Vec<String>,
 }
 
-impl BundleMetadata {
-    fn fallback(environment_name: &str) -> Self {
-        Self {
-            summary: environment_name.to_string(),
-            author: default_author(),
-            description: None,
-            release_notes: None,
-            featured_packages: Vec::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct FeaturedPackage {
-    pub name: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct LauncherMetadata {
-    pub summary: String,
-}
+impl BundleMetadata {}
 
 fn default_author() -> String {
     "unknown".to_string()
@@ -68,11 +47,11 @@ const MAGIC_BYTES: &[u8] = b"CONDADIST!";
 const LENGTH_FIELD_SIZE: u64 = std::mem::size_of::<u64>() as u64;
 
 struct EmbeddedLayout {
-    metadata: LauncherMetadata,
+    metadata: BundleMetadata,
     payload_len: u64,
 }
 
-pub fn read_embedded_metadata() -> Result<LauncherMetadata> {
+pub fn read_embedded_metadata() -> Result<BundleMetadata> {
     let exe_path = env::current_exe().context("failed to locate running installer")?;
     let mut file = fs::File::open(&exe_path)
         .with_context(|| format!("failed to open installer binary at {}", exe_path.display()))?;
@@ -106,10 +85,10 @@ pub fn load_bundle() -> Result<BundleData> {
     let lockfile = LockFile::from_path(&lockfile_path)
         .with_context(|| format!("failed to read lockfile at {}", lockfile_path.display()))?;
 
-    let (environment_name, environment) = resolve_environment(&lockfile, None)?;
+    let (_environment_name, environment) = resolve_environment(&lockfile, None)?;
     let target_platform = Platform::current();
     let records = collect_records(environment, target_platform, &channel_dir)?;
-    let metadata = load_bundle_metadata(&channel_dir, &environment_name)?;
+    let metadata = layout.metadata.clone();
 
     Ok(BundleData {
         channel_dir,
@@ -187,7 +166,7 @@ fn read_embedded_layout(file: &mut fs::File) -> Result<EmbeddedLayout> {
     let mut metadata_bytes = vec![0u8; metadata_len_usize];
     file.read_exact(&mut metadata_bytes)
         .context("failed to read installer metadata")?;
-    let metadata: LauncherMetadata =
+    let metadata: BundleMetadata =
         serde_json::from_slice(&metadata_bytes).context("failed to parse installer metadata")?;
 
     file.seek(SeekFrom::Start(payload_start))
@@ -299,23 +278,6 @@ fn collect_records(
     }
 
     Ok(records)
-}
-
-fn load_bundle_metadata(channel_dir: &Path, environment_name: &str) -> Result<BundleMetadata> {
-    let metadata_path = channel_dir.join(BUNDLE_METADATA_FILE);
-    if !metadata_path.exists() {
-        return Ok(BundleMetadata::fallback(environment_name));
-    }
-
-    let raw = fs::read_to_string(&metadata_path)
-        .with_context(|| format!("failed to read bundle metadata {}", metadata_path.display()))?;
-    let manifest: BundleMetadata = serde_json::from_str(&raw).with_context(|| {
-        format!(
-            "failed to parse bundle metadata {}",
-            metadata_path.display()
-        )
-    })?;
-    Ok(manifest)
 }
 
 fn resolve_bundle_root(temp_parent: &Path) -> Result<PathBuf> {
