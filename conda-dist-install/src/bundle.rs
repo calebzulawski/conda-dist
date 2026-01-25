@@ -8,7 +8,7 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use flate2::read::GzDecoder;
 use rattler_conda_types::{Platform, RepoDataRecord};
-use rattler_lock::{CondaPackageData, DEFAULT_ENVIRONMENT_NAME, LockFile};
+use rattler_lock::{CondaPackageData, LockFile};
 use serde::Deserialize;
 use tar::Archive;
 use tempfile::TempDir;
@@ -37,8 +37,6 @@ pub struct BundleMetadata {
     pub featured_packages: Vec<String>,
 }
 
-impl BundleMetadata {}
-
 fn default_author() -> String {
     "unknown".to_string()
 }
@@ -63,10 +61,13 @@ pub fn load_bundle() -> Result<BundleData> {
     let exe_path = env::current_exe().context("failed to locate running installer")?;
     let mut file = fs::File::open(&exe_path)
         .with_context(|| format!("failed to open installer binary at {}", exe_path.display()))?;
-    let layout = read_embedded_layout(&mut file)?;
+    let EmbeddedLayout {
+        metadata,
+        payload_len,
+    } = read_embedded_layout(&mut file)?;
 
     let temp_dir = TempDir::new().context("failed to prepare temporary bundle directory")?;
-    let payload_reader = file.take(layout.payload_len);
+    let payload_reader = file.take(payload_len);
     let decoder = GzDecoder::new(payload_reader);
     let mut archive = Archive::new(decoder);
     archive
@@ -85,11 +86,9 @@ pub fn load_bundle() -> Result<BundleData> {
     let lockfile = LockFile::from_path(&lockfile_path)
         .with_context(|| format!("failed to read lockfile at {}", lockfile_path.display()))?;
 
-    let (_environment_name, environment) = resolve_environment(&lockfile, None)?;
+    let environment = resolve_environment(&lockfile)?;
     let target_platform = Platform::current();
     let records = collect_records(environment, target_platform, &channel_dir)?;
-    let metadata = layout.metadata.clone();
-
     Ok(BundleData {
         channel_dir,
         metadata,
@@ -194,24 +193,18 @@ fn locate_lockfile(channel_dir: &Path) -> Result<PathBuf> {
 
 fn resolve_environment<'lock>(
     lockfile: &'lock LockFile,
-    requested: Option<&str>,
-) -> Result<(String, rattler_lock::Environment<'lock>)> {
-    if let Some(name) = requested {
-        let environment = lockfile
-            .environment(name)
-            .with_context(|| format!("installer definition '{name}' not found in bundle"))?;
-        return Ok((name.to_string(), environment));
-    }
-
+) -> Result<rattler_lock::Environment<'lock>> {
     if let Some(environment) = lockfile.default_environment() {
-        return Ok((DEFAULT_ENVIRONMENT_NAME.to_string(), environment));
+        return Ok(environment);
     }
 
-    let environments: Vec<_> = lockfile.environments().collect();
-    match environments.as_slice() {
-        [] => bail!("installer bundle did not contain any installation definitions"),
-        [(name, environment)] => Ok(((*name).to_string(), *environment)),
-        _ => bail!("installer bundle is ambiguous; contact the package author for assistance"),
+    let mut environments = lockfile.environments();
+    match environments.next() {
+        None => bail!("installer bundle did not contain any installation definitions"),
+        Some((_name, environment)) if environments.next().is_none() => Ok(environment),
+        Some(_) => {
+            bail!("installer bundle is ambiguous; contact the package author for assistance")
+        }
     }
 }
 
