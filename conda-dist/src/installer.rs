@@ -235,19 +235,14 @@ pub fn create_installers(
             )
         })?;
 
-        let archive_bytes = create_tar_gz_for_platform(
-            channel_dir,
-            environment_name,
-            *platform,
-            installer_bytes,
-            metadata,
-        )
-        .with_context(|| {
-            format!(
-                "failed to prepare archive for platform {}",
-                platform.as_str()
-            )
-        })?;
+        let archive_bytes =
+            create_tar_gz_for_platform(channel_dir, environment_name, *platform, metadata)
+                .with_context(|| {
+                    format!(
+                        "failed to prepare archive for platform {}",
+                        platform.as_str()
+                    )
+                })?;
 
         let installer_name = format!("{name_prefix}-{}", platform.as_str());
         let target_path = output_dir.join(installer_name);
@@ -304,7 +299,6 @@ fn create_tar_gz_for_platform(
     root_dir: &Path,
     root_name: &str,
     platform: Platform,
-    installer_bytes: &[u8],
     metadata: &PreparedBundleMetadata,
 ) -> Result<Vec<u8>> {
     let encoder = GzEncoder::new(Vec::new(), Compression::new(6));
@@ -373,13 +367,6 @@ fn create_tar_gz_for_platform(
         format!("{root_name}/{BUNDLE_METADATA_FILE}"),
         metadata_bytes.as_slice(),
         0o644,
-    )?;
-
-    append_regular_file(
-        &mut builder,
-        format!("{root_name}/installer"),
-        installer_bytes,
-        0o755,
     )?;
 
     let encoder = builder
