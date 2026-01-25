@@ -31,10 +31,10 @@ pub fn print_bundle_summary(
         println!("Highlighted packages:");
         let index = build_record_index(records);
         for package in &metadata.featured_packages {
-            if let Some(record) = index.get(package.name.as_str()) {
+            if let Some(record) = index.get(package.as_str()) {
                 print_highlight(record, channel_dir);
             } else {
-                println!("- {} (details unavailable in this bundle)", package.name);
+                println!("- {} (details unavailable in this bundle)", package);
             }
         }
     }

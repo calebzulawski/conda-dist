@@ -2,7 +2,7 @@ use std::{
     collections::HashSet,
     convert::TryFrom,
     fs,
-    io::{Cursor, Write},
+    io::Write,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -11,19 +11,13 @@ use anyhow::{Context, Result, bail};
 use flate2::{Compression, write::GzEncoder};
 use rattler_conda_types::{PackageName, Platform, RepoDataRecord};
 use serde::Serialize;
-use tar::{Builder, EntryType, Header, HeaderMode};
+use tar::{Builder, HeaderMode};
 
 use crate::{conda::LOCKFILE_NAME, config::BundleMetadataConfig, progress::ProgressCounter};
 
 include!(concat!(env!("OUT_DIR"), "/installers.rs"));
 
-const BUNDLE_METADATA_FILE: &str = "bundle-metadata.json";
 const MAGIC_BYTES: &[u8] = b"CONDADIST!";
-
-#[derive(Serialize)]
-struct LauncherMetadata {
-    summary: String,
-}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BundleMetadataManifest {
@@ -34,20 +28,10 @@ pub struct BundleMetadataManifest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub release_notes: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub featured_packages: Vec<FeaturedPackageManifest>,
+    pub featured_packages: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct FeaturedPackageManifest {
-    pub name: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct PreparedBundleMetadata {
-    pub manifest: BundleMetadataManifest,
-}
-
-impl PreparedBundleMetadata {
+impl BundleMetadataManifest {
     pub fn from_config(
         environment_name: &str,
         config: Option<&BundleMetadataConfig>,
@@ -84,21 +68,17 @@ impl PreparedBundleMetadata {
             }
 
             if seen.insert(package_name.clone()) {
-                featured.push(FeaturedPackageManifest {
-                    name: package_name.as_normalized().to_string(),
-                });
+                featured.push(package_name.as_normalized().to_string());
             }
         }
 
-        let manifest = BundleMetadataManifest {
+        Ok(Self {
             summary,
             author,
             description,
             release_notes,
             featured_packages: featured,
-        };
-
-        Ok(Self { manifest })
+        })
     }
 }
 
@@ -196,7 +176,7 @@ pub fn create_installers(
     environment_name: &str,
     channel_dir: &Path,
     selected_platforms: &[Platform],
-    metadata: &PreparedBundleMetadata,
+    metadata: &BundleMetadataManifest,
     progress: &mut ProgressCounter,
 ) -> Result<Vec<PathBuf>> {
     let (output_dir, name_prefix) = installer_output_spec(script_path, environment_name)?;
@@ -235,19 +215,13 @@ pub fn create_installers(
             )
         })?;
 
-        let archive_bytes = create_tar_gz_for_platform(
-            channel_dir,
-            environment_name,
-            *platform,
-            installer_bytes,
-            metadata,
-        )
-        .with_context(|| {
-            format!(
-                "failed to prepare archive for platform {}",
-                platform.as_str()
-            )
-        })?;
+        let archive_bytes = create_tar_gz_for_platform(channel_dir, environment_name, *platform)
+            .with_context(|| {
+                format!(
+                    "failed to prepare archive for platform {}",
+                    platform.as_str()
+                )
+            })?;
 
         let installer_name = format!("{name_prefix}-{}", platform.as_str());
         let target_path = output_dir.join(installer_name);
@@ -304,8 +278,6 @@ fn create_tar_gz_for_platform(
     root_dir: &Path,
     root_name: &str,
     platform: Platform,
-    installer_bytes: &[u8],
-    metadata: &PreparedBundleMetadata,
 ) -> Result<Vec<u8>> {
     let encoder = GzEncoder::new(Vec::new(), Compression::new(6));
     let mut builder = Builder::new(encoder);
@@ -366,22 +338,6 @@ fn create_tar_gz_for_platform(
         }
     }
 
-    let metadata_bytes =
-        serde_json::to_vec(&metadata.manifest).context("failed to serialize bundle metadata")?;
-    append_regular_file(
-        &mut builder,
-        format!("{root_name}/{BUNDLE_METADATA_FILE}"),
-        metadata_bytes.as_slice(),
-        0o644,
-    )?;
-
-    append_regular_file(
-        &mut builder,
-        format!("{root_name}/installer"),
-        installer_bytes,
-        0o755,
-    )?;
-
     let encoder = builder
         .into_inner()
         .context("failed to finalize tar archive")?;
@@ -391,32 +347,8 @@ fn create_tar_gz_for_platform(
     Ok(archive)
 }
 
-fn append_regular_file<W: Write>(
-    builder: &mut Builder<W>,
-    path: String,
-    bytes: &[u8],
-    mode: u32,
-) -> Result<()> {
-    let mut header = Header::new_gnu();
-    header.set_entry_type(EntryType::Regular);
-    header.set_mode(mode);
-    header.set_size(bytes.len() as u64);
-    header.set_uid(0);
-    header.set_gid(0);
-    header.set_mtime(0);
-    header.set_cksum();
-    let mut cursor = Cursor::new(bytes);
-    builder
-        .append_data(&mut header, &path, &mut cursor)
-        .with_context(|| format!("failed to add {path} to archive"))?;
-    Ok(())
-}
-
-fn launcher_metadata_blob(metadata: &PreparedBundleMetadata) -> Result<Vec<u8>> {
-    let launcher_metadata = LauncherMetadata {
-        summary: metadata.manifest.summary.clone(),
-    };
-    serde_json::to_vec(&launcher_metadata).context("failed to encode launcher metadata")
+fn launcher_metadata_blob(metadata: &BundleMetadataManifest) -> Result<Vec<u8>> {
+    serde_json::to_vec(metadata).context("failed to encode embedded metadata")
 }
 
 fn write_self_extracting_installer(

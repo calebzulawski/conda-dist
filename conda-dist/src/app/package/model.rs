@@ -66,7 +66,7 @@ pub fn install_prefix(
 /// Determine the base package summary, falling back to the environment name.
 pub fn base_summary(prep: &EnvironmentPreparation) -> Result<String> {
     let name = prep.environment_name.as_str();
-    let summary_source = prep.bundle_metadata.manifest.summary.trim();
+    let summary_source = prep.bundle_metadata.summary.trim();
     let summary_line = if summary_source.is_empty() {
         name.to_string()
     } else {
@@ -80,7 +80,7 @@ pub fn base_summary(prep: &EnvironmentPreparation) -> Result<String> {
 
 /// Collect description paragraphs for the base package metadata.
 pub fn base_description_parts(prep: &EnvironmentPreparation) -> Vec<String> {
-    compose_description_parts(&prep.bundle_metadata.manifest)
+    compose_description_parts(&prep.bundle_metadata)
 }
 
 /// Build the native package name for a dependency package.

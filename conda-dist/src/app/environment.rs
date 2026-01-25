@@ -26,7 +26,7 @@ pub struct EnvironmentPreparation {
     pub environment_name: String,
     pub staging_dir: TempDir,
     pub channel_dir: PathBuf,
-    pub bundle_metadata: installer::PreparedBundleMetadata,
+    pub bundle_metadata: installer::BundleMetadataManifest,
     pub target_platforms: Vec<Platform>,
 }
 
@@ -175,7 +175,7 @@ pub async fn prepare_environment(
             .await?
     };
 
-    let bundle_metadata = installer::PreparedBundleMetadata::from_config(
+    let bundle_metadata = installer::BundleMetadataManifest::from_config(
         &environment_name,
         manifest_ctx.config.metadata(),
         &solved_records,
