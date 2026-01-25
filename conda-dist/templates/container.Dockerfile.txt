@@ -1,0 +1,10 @@
+# syntax=docker/dockerfile:1.6
+FROM scratch AS installer_payload
+COPY installers/ /installers/
+
+FROM {{ base_image }}
+ARG TARGETARCH
+RUN --mount=type=bind,from=installer_payload,source=/installers/installer-${TARGETARCH},target=/tmp/installer,ro ["/tmp/installer", "{{ prefix }}"]
+ENV CONDA_PREFIX="{{ prefix }}" \
+    PATH="{{ prefix }}/bin:${PATH}"
+LABEL org.opencontainers.image.title="{{ title }}"

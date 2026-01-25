@@ -8,6 +8,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use rattler_conda_types::Platform;
 use tokio::process::Command;
 
+use askama::Template;
+
 use crate::{
     cli::ContainerArgs, config::ContainerConfig, installer, progress::Progress,
     workspace::Workspace,
@@ -252,6 +254,14 @@ struct BuildContext {
     oci_archive: PathBuf,
 }
 
+#[derive(Template)]
+#[template(path = "container.Dockerfile.txt", escape = "none")]
+struct ContainerDockerfileTemplate<'a> {
+    base_image: &'a str,
+    prefix: &'a str,
+    title: &'a str,
+}
+
 fn create_build_context(
     context_dir: &Path,
     installers: &[(Platform, PathBuf)],
@@ -295,22 +305,12 @@ fn create_build_context(
         }
     }
 
-    let dockerfile_contents = format!(
-        r#"# syntax=docker/dockerfile:1.6
-FROM scratch AS installer_payload
-COPY installers/ /installers/
-
-FROM {base}
-ARG TARGETARCH
-RUN --mount=type=bind,from=installer_payload,source=/installers/installer-${{TARGETARCH}},target=/tmp/installer,ro ["/tmp/installer", "{prefix}"]
-ENV CONDA_PREFIX="{prefix}" \
-    PATH="{prefix}/bin:${{PATH}}"
-LABEL org.opencontainers.image.title="{title}"
-"#,
-        prefix = install_prefix,
-        base = container_cfg.base_image,
-        title = environment_name
-    );
+    let dockerfile_contents = ContainerDockerfileTemplate {
+        base_image: &container_cfg.base_image,
+        prefix: install_prefix,
+        title: environment_name,
+    }
+    .render()?;
 
     fs::write(&dockerfile_path, dockerfile_contents).with_context(|| {
         format!(
