@@ -66,9 +66,19 @@ Configure native RPM/DEB packaging:
 [package]
 split_deps = false
 release = "1"
+
+[package.images.rocky]
+type = "rpm"
+image = "rockylinux:9"
+
+[package.images.ubuntu]
+type = "deb"
+image = "ubuntu:24.04"
 ```
 
 When enabled, `split_deps` emits a metapackage plus individual native packages
 for each transitive dependency.
 The optional `release` field controls the RPM/DEB release suffix applied to the
 base package (defaults to `1`).
+Each entry under `package.images` defines a container image keyed by name; the
+name is used as the output subdirectory.

@@ -234,13 +234,8 @@ jobs:
       - name: Make conda-dist executable
         run: chmod +x release/conda-dist
       - name: Build native packages
-        env:
-          RPM_IMAGE: redhat/ubi10
-          DEB_IMAGE: ubuntu:24.04
         run: |
           release/conda-dist package ${{ matrix.manifest.path }} \
-            --rpm-image "$RPM_IMAGE" \
-            --deb-image "$DEB_IMAGE" \
             --output-dir native-packages
       - name: Upload native packages
         uses: actions/upload-artifact@v4
@@ -290,10 +285,10 @@ jobs:
       matrix:
         image:
           - container: redhat/ubi10
-            package_subdir: redhat-ubi10
+            package_subdir: redhat
             install: dnf install -y
           - container: ubuntu:24.04
-            package_subdir: ubuntu-24.04
+            package_subdir: ubuntu
             install: apt install -y
         platform:
           - os: ubuntu-24.04

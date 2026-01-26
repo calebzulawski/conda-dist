@@ -61,12 +61,22 @@ docker run bash:1.0.0 bash -c "echo hello"
 
 ### Native Packages
 
-To create native RPM and DEB artifacts, run:
+Define package images in the manifest:
+
+```toml
+[package.images.rocky]
+type = "rpm"
+image = "rockylinux:9"
+
+[package.images.ubuntu]
+type = "deb"
+image = "ubuntu:22.04"
+```
+
+Then create native RPM and DEB artifacts:
 
 ```bash
-conda-dist package bash.toml \
-  --rpm-image rockylinux:9 \
-  --deb-image ubuntu:22.04
+conda-dist package bash.toml
 ```
 
 ### Lockfile Maintenance

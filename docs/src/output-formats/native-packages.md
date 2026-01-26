@@ -4,15 +4,25 @@
 
 ## Usage Example
 
-```bash
-conda-dist package app.toml \
-  --rpm-image rockylinux:9 \
-  --deb-image ubuntu:24.04
+```toml
+[package.images.rocky]
+type = "rpm"
+image = "rockylinux:9"
+
+[package.images.ubuntu]
+type = "deb"
+image = "ubuntu:24.04"
 ```
 
-Packages are written beneath `<output-dir>/<image>/`, grouped by the container
-image used. The output directory defaults to the manifest directory, and each
-image directory contains the generated RPM/DEB artifacts.
+```bash
+conda-dist package app.toml
+```
+
+Packages are written beneath `<output-dir>/<image-name>/`, grouped by the image
+name from the manifest. The output directory defaults to the manifest directory,
+and each image directory contains the generated RPM/DEB artifacts.
+
+Use `--image <name>` to select a subset of images from the manifest.
 
 ## Characteristics
 

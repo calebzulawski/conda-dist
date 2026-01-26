@@ -8,27 +8,13 @@ use std::str::FromStr;
 use rattler_conda_types::{Platform, RepoDataRecord, VersionWithSource};
 
 use crate::app::{context::ManifestContext, environment::EnvironmentPreparation};
+use crate::config::PackageFormat;
 use crate::installer;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PackageFormat {
-    Rpm,
-    Deb,
-}
-
-impl PackageFormat {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Rpm => "rpm",
-            Self::Deb => "deb",
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct PackageResult {
     pub format: PackageFormat,
-    pub image: String,
+    pub image_name: String,
     pub platform: Platform,
     pub path: PathBuf,
 }
