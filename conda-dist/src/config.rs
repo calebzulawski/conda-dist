@@ -19,7 +19,7 @@ pub struct CondaDistConfig {
     #[serde(default)]
     container: Option<ContainerConfig>,
     #[serde(default)]
-    package: Option<PackageConfig>,
+    package: PackageConfig,
     #[serde(default)]
     virtual_packages: Option<VirtualPackagesConfig>,
     #[serde(skip, default = "default_channel_config")]
@@ -70,15 +70,12 @@ impl CondaDistConfig {
         self.container.as_ref()
     }
 
-    pub fn package(&self) -> Option<&PackageConfig> {
-        self.package.as_ref()
+    pub fn package(&self) -> &PackageConfig {
+        &self.package
     }
 
     pub fn package_release(&self) -> &str {
-        self.package
-            .as_ref()
-            .map(|cfg| cfg.release.as_str())
-            .unwrap_or("1")
+        self.package.release.as_str()
     }
 
     pub fn virtual_packages(&self) -> Option<&VirtualPackagesConfig> {
@@ -126,6 +123,13 @@ impl CondaDistConfig {
         }
         if self.platforms.is_empty() {
             bail!("manifest must contain at least one entry in 'platforms'");
+        }
+        if let Some(container) = self.container.as_ref() {
+            validators::validate_image_ref(&container.base_image, "container.base_image")?;
+        }
+        for (name, image) in &self.package.images {
+            validators::validate_image_name(name)?;
+            validators::validate_image_ref(&image.image, &format!("package.images.{name}.image"))?;
         }
         Ok(())
     }
@@ -190,6 +194,31 @@ pub struct PackageConfig {
     pub split_deps: bool,
     #[serde(default = "default_package_release")]
     pub release: String,
+    #[serde(default)]
+    pub images: BTreeMap<String, PackageImageConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PackageImageConfig {
+    #[serde(rename = "type", alias = "package-type", alias = "package_type")]
+    pub package_type: PackageFormat,
+    pub image: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PackageFormat {
+    Rpm,
+    Deb,
+}
+
+impl PackageFormat {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Rpm => "rpm",
+            Self::Deb => "deb",
+        }
+    }
 }
 
 impl Default for ContainerConfig {
@@ -199,6 +228,38 @@ impl Default for ContainerConfig {
             prefix: None,
             tag_template: default_tag_template(),
         }
+    }
+}
+
+mod validators {
+    use anyhow::{Result, bail};
+
+    pub fn validate_image_name(name: &str) -> Result<()> {
+        if name.is_empty() {
+            bail!("package image name must not be empty");
+        }
+        if name.chars().any(|ch| ch.is_whitespace()) {
+            bail!("package image name must not contain whitespace");
+        }
+        if name
+            .chars()
+            .any(|ch| !(ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.')))
+        {
+            bail!(
+                "package image name '{name}' may only contain ASCII letters, digits, '-', '_', or '.'"
+            );
+        }
+        Ok(())
+    }
+
+    pub fn validate_image_ref(image: &str, label: &str) -> Result<()> {
+        if image.is_empty() {
+            bail!("{label} must define a non-empty image reference");
+        }
+        if image.chars().any(|ch| ch.is_whitespace()) {
+            bail!("{label} must not contain whitespace");
+        }
+        Ok(())
     }
 }
 

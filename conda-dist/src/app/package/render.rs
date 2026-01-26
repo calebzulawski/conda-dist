@@ -8,11 +8,8 @@ use anyhow::Result;
 use askama::Template;
 use rattler_conda_types::Platform;
 
-use super::{
-    OUTPUT_DEST_PATH,
-    model::{DependencyPackage, PackageFormat},
-    plan::BasePackageMetadata,
-};
+use super::{OUTPUT_DEST_PATH, model::DependencyPackage, plan::BasePackageMetadata};
+use crate::config::PackageFormat;
 
 const RPM_SCRIPT_NAME: &str = "package-rpm.sh";
 const DEB_SCRIPT_NAME: &str = "package-deb.sh";

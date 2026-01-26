@@ -91,13 +91,9 @@ pub struct PackageArgs {
     #[arg(long = "engine", value_name = "PATH")]
     pub engine: Option<PathBuf>,
 
-    /// Build RPM packages using the specified container image (repeatable)
-    #[arg(long = "rpm-image", value_name = "IMAGE")]
-    pub rpm_images: Vec<String>,
-
-    /// Build DEB packages using the specified container image (repeatable)
-    #[arg(long = "deb-image", value_name = "IMAGE")]
-    pub deb_images: Vec<String>,
+    /// Restrict native packaging to specific image name(s) from the manifest
+    #[arg(long = "image", value_name = "NAME")]
+    pub image: Vec<String>,
 
     /// Restrict native packaging to specific target platform(s) (defaults to host platform)
     #[arg(long = "platform", value_name = "PLATFORM")]

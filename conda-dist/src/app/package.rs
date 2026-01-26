@@ -19,7 +19,9 @@ use rattler_conda_types::Platform;
 use std::os::unix::fs::PermissionsExt;
 use tempfile::Builder as TempDirBuilder;
 
-use crate::{cli::PackageArgs, installer, progress::Progress, workspace::Workspace};
+use crate::{
+    cli::PackageArgs, config::PackageFormat, installer, progress::Progress, workspace::Workspace,
+};
 mod dependency_package_files;
 mod model;
 mod plan;
@@ -37,10 +39,7 @@ use super::{
 const OUTPUT_DEST_PATH: &str = "/output";
 
 use dependency_package_files::collect_dependencies;
-use model::{
-    DependencyPackage, PackageFormat, ensure_linux_package_platform, install_prefix,
-    sanitize_native_name,
-};
+use model::{DependencyPackage, ensure_linux_package_platform, install_prefix};
 use plan::write_package_plan;
 use runner::run_package;
 
@@ -53,19 +52,34 @@ pub async fn execute(
     let PackageArgs {
         manifest,
         engine,
-        rpm_images,
-        deb_images,
+        image,
         platform,
         output_dir,
     } = args;
 
-    if rpm_images.is_empty() && deb_images.is_empty() {
-        bail!("at least one --rpm-image or --deb-image must be provided");
-    }
-
     let manifest_ctx = load_manifest_context(manifest)?;
     let workspace = Workspace::from_manifest_dir(&manifest_ctx.manifest_dir, work_dir)?;
     let runtime = runtime::resolve_runtime(engine)?;
+
+    let requested_images: std::collections::HashSet<String> = image.into_iter().collect();
+    let mut images_map = manifest_ctx.config.package().images.clone();
+    if !requested_images.is_empty() {
+        let missing: Vec<_> = requested_images
+            .iter()
+            .filter(|name| !images_map.contains_key(*name))
+            .cloned()
+            .collect();
+        if !missing.is_empty() {
+            bail!(
+                "requested package image(s) not defined in manifest: {}",
+                missing.join(", ")
+            );
+        }
+        images_map.retain(|name, _| requested_images.contains(name));
+    }
+    if images_map.is_empty() {
+        bail!("manifest must define at least one package image under [package.images]");
+    }
 
     let requested_platforms = normalize_platforms(if platform.is_empty() {
         vec![Platform::current()]
@@ -99,11 +113,7 @@ pub async fn execute(
     )
     .await?;
 
-    let split_deps = manifest_ctx
-        .config
-        .package()
-        .map(|cfg| cfg.split_deps)
-        .unwrap_or(false);
+    let split_deps = manifest_ctx.config.package().split_deps;
 
     let prefix = install_prefix(&manifest_ctx, &prep)?;
     let output_root = match output_dir {
@@ -145,16 +155,8 @@ pub async fn execute(
         .await?;
     let installer_map: HashMap<Platform, PathBuf> = installers.into_iter().collect();
 
-    let rpm_script = if rpm_images.is_empty() {
-        None
-    } else {
-        Some(render::write_script(PackageFormat::Rpm, packaging_dir)?)
-    };
-    let deb_script = if deb_images.is_empty() {
-        None
-    } else {
-        Some(render::write_script(PackageFormat::Deb, packaging_dir)?)
-    };
+    let rpm_script = render::write_script(PackageFormat::Rpm, packaging_dir)?;
+    let deb_script = render::write_script(PackageFormat::Deb, packaging_dir)?;
 
     struct PlatformBatch {
         platform: Platform,
@@ -175,21 +177,10 @@ pub async fn execute(
         });
     }
 
-    let driver_specs = [
-        (PackageFormat::Rpm, &rpm_images, rpm_script.as_deref()),
-        (PackageFormat::Deb, &deb_images, deb_script.as_deref()),
-    ];
-
     let mut package_count = 0;
     for batch in &platform_batches {
         let per_image = 1 + batch.dependency_packages.len();
-        for (_format, images, _script_path) in &driver_specs {
-            let image_count = images.len();
-            if image_count == 0 {
-                continue;
-            }
-            package_count += image_count * per_image;
-        }
+        package_count += images_map.len() * per_image;
     }
 
     if package_count == 0 {
@@ -209,47 +200,48 @@ pub async fn execute(
                 let mut completed = 0;
 
                 for batch in platform_batches.into_iter() {
-                    for (format, images, script_path) in &driver_specs {
-                        let Some(script_path) = script_path else {
-                            continue;
+                    for (name, cfg) in images_map.iter() {
+                        let format = cfg.package_type;
+                        let script_path = match format {
+                            PackageFormat::Rpm => rpm_script.as_path(),
+                            PackageFormat::Deb => deb_script.as_path(),
                         };
-                        for image in *images {
-                            let output_dir = output_root.join(sanitize_native_name(image));
-                            std::fs::create_dir_all(&output_dir)?;
-                            let plan_rel = write_package_plan(
-                                *format,
-                                image,
-                                batch.platform,
-                                packaging_dir,
-                                &batch.dependency_packages,
-                                &manifest_ctx,
-                                &prep,
-                            )?;
+                        let output_dir = output_root.join(name);
+                        std::fs::create_dir_all(&output_dir)?;
+                        let plan_rel = write_package_plan(
+                            format,
+                            name,
+                            batch.platform,
+                            packaging_dir,
+                            &batch.dependency_packages,
+                            &manifest_ctx,
+                            &prep,
+                        )?;
 
-                            let installer_path =
-                                installer_map.get(&batch.platform).cloned().ok_or_else(|| {
-                                    anyhow!(
-                                        "no installer available for platform '{}'",
-                                        batch.platform.as_str()
-                                    )
-                                })?;
+                        let installer_path =
+                            installer_map.get(&batch.platform).cloned().ok_or_else(|| {
+                                anyhow!(
+                                    "no installer available for platform '{}'",
+                                    batch.platform.as_str()
+                                )
+                            })?;
 
-                            let job = plan::NativeBuild {
-                                format: *format,
-                                image: image.clone(),
-                                platform: batch.platform,
-                                script_path: script_path.to_path_buf(),
-                                output_dir,
-                                installer_path,
-                                packaging_root: packaging_dir.to_path_buf(),
-                                plan_rel,
-                            };
+                        let job = plan::NativeBuild {
+                            format,
+                            image_name: name.clone(),
+                            image: cfg.clone(),
+                            platform: batch.platform,
+                            script_path: script_path.to_path_buf(),
+                            output_dir,
+                            installer_path,
+                            packaging_root: packaging_dir.to_path_buf(),
+                            plan_rel,
+                        };
 
-                            let result = run_package(&runtime_clone, &prefix_clone, job).await?;
-                            completed += result.len();
-                            produced.extend(result);
-                            counter.set(completed);
-                        }
+                        let result = run_package(&runtime_clone, &prefix_clone, job).await?;
+                        completed += result.len();
+                        produced.extend(result);
+                        counter.set(completed);
                     }
                 }
 
@@ -290,7 +282,7 @@ pub async fn execute(
                 "  - [{} {} {}] {}",
                 result.format.label(),
                 result.platform.as_str(),
-                result.image,
+                result.image_name,
                 result.path.display()
             ));
         }

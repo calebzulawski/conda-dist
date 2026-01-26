@@ -8,10 +8,11 @@ use tokio::process::Command;
 
 use super::{
     OUTPUT_DEST_PATH,
-    model::{PackageFormat, PackageResult},
+    model::PackageResult,
     plan::NativeBuild,
     runtime::{self, RuntimeBinary, RuntimeEngine},
 };
+use crate::config::PackageFormat;
 
 const SCRIPT_DEST_PATH: &str = "/tmp/conda-dist-package.sh";
 const INSTALLER_DEST_PATH: &str = "/tmp/conda-dist-installer";
@@ -69,7 +70,7 @@ pub async fn run_package(
         OUTPUT_DEST_PATH
     ));
 
-    cmd.arg(&job.image);
+    cmd.arg(&job.image.image);
     cmd.arg("/bin/bash").arg(SCRIPT_DEST_PATH);
 
     let start_time = SystemTime::now();
@@ -81,7 +82,7 @@ pub async fn run_package(
         .into_iter()
         .map(|path| PackageResult {
             format: job.format,
-            image: job.image.clone(),
+            image_name: job.image_name.clone(),
             platform: job.platform,
             path,
         })

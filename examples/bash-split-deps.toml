@@ -5,15 +5,23 @@ license = "Proprietary"
 channels = ["conda-forge"]
 platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64"]
 
-[container]
-tag_template = "registry.example.com/example/{name}:{version}"
-
 [dependencies]
 bash = "*"
+
+[container]
+tag_template = "registry.example.com/example/{name}:{version}"
 
 [package]
 split_deps = true
 release = "1"
+
+[package.images.redhat]
+type = "rpm"
+image = "redhat/ubi10"
+
+[package.images.ubuntu]
+type = "deb"
+image = "ubuntu:24.04"
 
 [metadata]
 summary = "Portable Bash"

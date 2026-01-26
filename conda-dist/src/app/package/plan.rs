@@ -6,16 +6,16 @@ use anyhow::{Result, anyhow};
 use rattler_conda_types::{PackageName, PackageRecord, Platform};
 
 use super::{
-    model::{
-        DependencyPackage, PackageFormat, install_prefix, sanitize_native_name, split_package_name,
-    },
+    model::{DependencyPackage, install_prefix, split_package_name},
     render,
 };
+use crate::config::PackageFormat;
 
 #[derive(Debug, Clone)]
 pub struct NativeBuild {
     pub format: PackageFormat,
-    pub image: String,
+    pub image_name: String,
+    pub image: crate::config::PackageImageConfig,
     pub platform: Platform,
     pub script_path: PathBuf,
     pub output_dir: PathBuf,
@@ -36,12 +36,16 @@ struct ManifestLayout {
 }
 
 impl ManifestLayout {
-    fn new(packaging_root: &Path, format: PackageFormat, platform: Platform, image: &str) -> Self {
-        let image_label = sanitize_native_name(image);
+    fn new(
+        packaging_root: &Path,
+        format: PackageFormat,
+        platform: Platform,
+        image_name: &str,
+    ) -> Self {
         let root = packaging_root
             .join(format.label())
             .join(platform.as_str())
-            .join(&image_label);
+            .join(image_name);
         let specs_dir = root.join("specs");
         let controls_dir = root.join("controls");
         let topdir_dir = root.join("topdir");
@@ -107,19 +111,15 @@ pub struct BasePackageMetadata<'a> {
 /// Write the package_plan.tsv describing per-package inputs for a single image/platform run.
 pub fn write_package_plan(
     format: PackageFormat,
-    image: &str,
+    image_name: &str,
     platform: Platform,
     packaging_root: &Path,
     dependency_packages: &[DependencyPackage],
     manifest_ctx: &crate::app::context::ManifestContext,
     prep: &crate::app::environment::EnvironmentPreparation,
 ) -> Result<PathBuf> {
-    let base_full = !manifest_ctx
-        .config
-        .package()
-        .map(|cfg| cfg.split_deps)
-        .unwrap_or(false);
-    let layout = ManifestLayout::new(packaging_root, format, platform, image);
+    let base_full = !manifest_ctx.config.package().split_deps;
+    let layout = ManifestLayout::new(packaging_root, format, platform, image_name);
     layout.ensure_dirs()?;
 
     let mut lines = Vec::new();
