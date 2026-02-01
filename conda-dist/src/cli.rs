@@ -20,6 +20,20 @@ pub struct Cli {
     #[arg(long = "unlock", global = true, conflicts_with = "locked")]
     pub unlock: bool,
 
+    /// Path to the container engine binary (defaults to docker, then podman)
+    #[arg(long = "engine", value_name = "PATH", global = true)]
+    pub engine: Option<PathBuf>,
+
+    /// Extra flags passed directly to the container engine (repeatable)
+    #[arg(
+        long = "engine-flag",
+        alias = "engine-arg",
+        value_name = "FLAG",
+        global = true,
+        allow_hyphen_values = true
+    )]
+    pub engine_flags: Vec<String>,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -72,10 +86,6 @@ pub struct ContainerArgs {
     #[arg(long = "platform", value_name = "PLATFORM")]
     pub platform: Option<Platform>,
 
-    /// Path to the container engine binary (defaults to docker, then podman)
-    #[arg(long = "engine", value_name = "PATH")]
-    pub engine: Option<PathBuf>,
-
     /// Path to write the resulting OCI archive (defaults to <manifest-dir>/<name>-container.oci.tar)
     #[arg(long = "oci-output", value_name = "PATH")]
     pub oci_output: Option<PathBuf>,
@@ -86,10 +96,6 @@ pub struct PackageArgs {
     /// Path to the conda-dist manifest (conda-dist.toml)
     #[arg(value_name = "MANIFEST", default_value = "conda-dist.toml")]
     pub manifest: PathBuf,
-
-    /// Path to the container engine binary (defaults to docker, then podman)
-    #[arg(long = "engine", value_name = "PATH")]
-    pub engine: Option<PathBuf>,
 
     /// Restrict native packaging to specific image name(s) from the manifest
     #[arg(long = "image", value_name = "NAME")]

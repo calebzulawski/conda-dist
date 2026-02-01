@@ -2,10 +2,6 @@
 
 use std::{path::Path, time::SystemTime};
 
-use anyhow::{Result, bail};
-use libc::{getegid, geteuid};
-use tokio::process::Command;
-
 use super::{
     OUTPUT_DEST_PATH,
     model::PackageResult,
@@ -13,6 +9,8 @@ use super::{
     runtime::{self, RuntimeBinary, RuntimeEngine},
 };
 use crate::config::PackageFormat;
+use anyhow::{Result, bail};
+use libc::{getegid, geteuid};
 
 const SCRIPT_DEST_PATH: &str = "/tmp/conda-dist-package.sh";
 const INSTALLER_DEST_PATH: &str = "/tmp/conda-dist-installer";
@@ -24,8 +22,9 @@ pub async fn run_package(
     prefix: &str,
     job: NativeBuild,
 ) -> Result<Vec<PackageResult>> {
-    let mut cmd = Command::new(runtime.binary());
+    let mut cmd = runtime.command();
     cmd.arg("run").arg("--rm");
+    cmd.args(runtime.engine_flags());
     if matches!(
         runtime.engine(),
         RuntimeEngine::Docker | RuntimeEngine::Podman

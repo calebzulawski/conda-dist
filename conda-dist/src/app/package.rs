@@ -47,11 +47,12 @@ use runner::run_package;
 pub async fn execute(
     args: PackageArgs,
     work_dir: Option<PathBuf>,
+    engine: Option<PathBuf>,
+    engine_flags: Vec<String>,
     lock_mode: LockMode,
 ) -> Result<()> {
     let PackageArgs {
         manifest,
-        engine,
         image,
         platform,
         output_dir,
@@ -59,7 +60,7 @@ pub async fn execute(
 
     let manifest_ctx = load_manifest_context(manifest)?;
     let workspace = Workspace::from_manifest_dir(&manifest_ctx.manifest_dir, work_dir)?;
-    let runtime = runtime::resolve_runtime(engine)?;
+    let runtime = runtime::resolve_runtime(engine, engine_flags)?;
 
     let requested_images: std::collections::HashSet<String> = image.into_iter().collect();
     let mut images_map = manifest_ctx.config.package().images.clone();

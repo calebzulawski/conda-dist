@@ -15,6 +15,8 @@ mod package {
     pub async fn execute(
         _args: PackageArgs,
         _work_dir: Option<std::path::PathBuf>,
+        _engine: Option<std::path::PathBuf>,
+        _engine_flags: Vec<String>,
         _lock_mode: LockMode,
     ) -> Result<()> {
         bail!("native package builds are only supported on unix platforms");
@@ -40,6 +42,8 @@ pub async fn execute(cli: Cli) -> Result<()> {
         work_dir,
         locked,
         unlock,
+        engine,
+        engine_flags,
         command,
     } = cli;
     let lock_mode = if unlock {
@@ -52,8 +56,12 @@ pub async fn execute(cli: Cli) -> Result<()> {
     match command {
         Command::Lock(args) => environment::execute_lock(args, work_dir, lock_mode).await,
         Command::Installer(args) => installer::execute(args, work_dir.clone(), lock_mode).await,
-        Command::Container(args) => container::execute(args, work_dir, lock_mode).await,
-        Command::Package(args) => package::execute(args, work_dir, lock_mode).await,
+        Command::Container(args) => {
+            container::execute(args, work_dir, engine, engine_flags, lock_mode).await
+        }
+        Command::Package(args) => {
+            package::execute(args, work_dir, engine, engine_flags, lock_mode).await
+        }
     }
 }
 

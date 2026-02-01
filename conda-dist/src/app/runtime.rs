@@ -17,26 +17,38 @@ pub enum RuntimeEngine {
 pub struct RuntimeBinary {
     binary: PathBuf,
     engine: RuntimeEngine,
+    engine_flags: Vec<String>,
 }
 
 impl RuntimeBinary {
-    pub fn new(binary: PathBuf, engine: RuntimeEngine) -> Self {
-        Self { binary, engine }
-    }
-
-    pub fn binary(&self) -> &Path {
-        &self.binary
+    pub fn new(binary: PathBuf, engine: RuntimeEngine, engine_flags: Vec<String>) -> Self {
+        Self {
+            binary,
+            engine,
+            engine_flags,
+        }
     }
 
     pub fn engine(&self) -> RuntimeEngine {
         self.engine
     }
+
+    pub fn command(&self) -> Command {
+        Command::new(&self.binary)
+    }
+
+    pub fn engine_flags(&self) -> &[String] {
+        &self.engine_flags
+    }
 }
 
-pub fn resolve_runtime(explicit: Option<PathBuf>) -> Result<RuntimeBinary> {
+pub fn resolve_runtime(
+    explicit: Option<PathBuf>,
+    engine_flags: Vec<String>,
+) -> Result<RuntimeBinary> {
     if let Some(path) = explicit {
         match detect_runtime_engine(&path) {
-            Some(engine) => return Ok(RuntimeBinary::new(path, engine)),
+            Some(engine) => return Ok(RuntimeBinary::new(path, engine, engine_flags)),
             None => bail!(
                 "unable to determine engine type for {} (expected docker or podman binary)",
                 path.display()
@@ -45,11 +57,19 @@ pub fn resolve_runtime(explicit: Option<PathBuf>) -> Result<RuntimeBinary> {
     }
 
     if let Some(path) = find_in_path("docker") {
-        return Ok(RuntimeBinary::new(path, RuntimeEngine::Docker));
+        return Ok(RuntimeBinary::new(
+            path,
+            RuntimeEngine::Docker,
+            engine_flags,
+        ));
     }
 
     if let Some(path) = find_in_path("podman") {
-        return Ok(RuntimeBinary::new(path, RuntimeEngine::Podman));
+        return Ok(RuntimeBinary::new(
+            path,
+            RuntimeEngine::Podman,
+            engine_flags,
+        ));
     }
 
     bail!("no container engine found; install docker or podman, or supply --engine <path>");
