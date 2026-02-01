@@ -5,6 +5,12 @@ conda-dist packages conda applications for use outside conda environments by pro
 ## Overview
 
 conda-dist lets you bundle an application and its dependencies into a self-contained package.
+
+It can produce:
+* Self-extracting installers
+* Container images (OCI format compatible with Docker, Podman, K8s etc.)
+* Native system packages (RPM/DEB)
+
 Use it to:
 * Distribute apps portably (similar to snap or AppImage)
 * Build reproducible Docker images for CI/CD
