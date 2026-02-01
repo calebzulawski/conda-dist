@@ -5,10 +5,8 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use rattler_conda_types::Platform;
-use tokio::process::Command;
-
 use askama::Template;
+use rattler_conda_types::Platform;
 
 use crate::{
     cli::ContainerArgs, config::ContainerConfig, installer, progress::Progress,
@@ -25,12 +23,13 @@ use super::{
 pub async fn execute(
     args: ContainerArgs,
     work_dir: Option<PathBuf>,
+    engine: Option<PathBuf>,
+    engine_flags: Vec<String>,
     lock_mode: LockMode,
 ) -> Result<()> {
     let ContainerArgs {
         manifest,
         platform,
-        engine,
         oci_output,
     } = args;
 
@@ -40,7 +39,7 @@ pub async fn execute(
 
     let target_platforms = resolve_target_platforms(&manifest_ctx, platform)?;
 
-    let runtime_binary = runtime::resolve_runtime(engine)?;
+    let runtime_binary = runtime::resolve_runtime(engine, engine_flags)?;
     let image_tag = derive_image_tag(&manifest_ctx, &container_cfg)?;
     let runtime = RuntimeConfig {
         binary: runtime_binary,
@@ -418,8 +417,9 @@ async fn build_with_docker(
     specs: &[String],
     output_path: &Path,
 ) -> Result<()> {
-    let mut cmd = Command::new(runtime.binary.binary());
+    let mut cmd = runtime.binary.command();
     cmd.arg("buildx").arg("build");
+    cmd.args(runtime.binary.engine_flags());
     let combined = specs.join(",");
     cmd.arg("--platform").arg(combined);
     cmd.arg("--tag").arg(&runtime.tag);
@@ -444,9 +444,10 @@ async fn build_with_podman(
 
     podman_manifest_remove(runtime).await.ok();
 
-    let mut cmd = Command::new(runtime.binary.binary());
-    cmd.arg("build")
-        .arg("--platform")
+    let mut cmd = runtime.binary.command();
+    cmd.arg("build");
+    cmd.args(runtime.binary.engine_flags());
+    cmd.arg("--platform")
         .arg(specs.join(","))
         .arg("--manifest")
         .arg(&runtime.tag)
@@ -480,7 +481,7 @@ async fn podman_save_image(runtime: &RuntimeConfig, output_path: &Path) -> Resul
 
     let archive_spec = format!("oci-archive:{}", archive_path.to_string_lossy());
 
-    let mut cmd = Command::new(runtime.binary.binary());
+    let mut cmd = runtime.binary.command();
     cmd.arg("manifest")
         .arg("push")
         .arg("--all")
@@ -491,7 +492,7 @@ async fn podman_save_image(runtime: &RuntimeConfig, output_path: &Path) -> Resul
 }
 
 async fn podman_manifest_remove(runtime: &RuntimeConfig) -> Result<()> {
-    let mut cmd = Command::new(runtime.binary.binary());
+    let mut cmd = runtime.binary.command();
     cmd.arg("manifest").arg("rm").arg(&runtime.tag);
 
     runtime::run_command(&mut cmd, "podman manifest rm")
