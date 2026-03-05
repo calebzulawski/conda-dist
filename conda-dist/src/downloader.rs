@@ -15,6 +15,7 @@ use rattler_digest::{Sha256, Sha256Hash, compute_bytes_digest};
 use rattler_index::{IndexFsConfig, index_fs};
 use rattler_networking::LazyClient;
 use tokio::fs;
+use url::Url;
 
 const MAX_PARALLEL_DOWNLOADS: usize = 8;
 
@@ -176,8 +177,7 @@ async fn stage_package(entry: PackageEntry, ctx: StageContext) -> Result<()> {
     let cache_ready = verify_cached_package(&cached_path, sha256).await?;
     let mut downloaded = false;
     if !cache_ready {
-        download_to_cache(&ctx.client, &url, &cached_path, sha256).await?;
-        downloaded = true;
+        downloaded = fetch_to_cache(&ctx.client, &url, &cached_path, sha256).await?;
     }
 
     copy_into_channel(&cached_path, &staged_path).await?;
@@ -192,6 +192,22 @@ async fn stage_package(entry: PackageEntry, ctx: StageContext) -> Result<()> {
     ctx.progress.tick();
 
     Ok(())
+}
+
+async fn fetch_to_cache(
+    client: &LazyClient,
+    url: &str,
+    cached_path: &Path,
+    sha256: Option<Sha256Hash>,
+) -> Result<bool> {
+    let parsed = Url::parse(url).with_context(|| format!("failed to parse package URL '{url}'"))?;
+    if parsed.scheme() == "file" {
+        copy_file_url_to_cache(&parsed, url, cached_path, sha256).await?;
+        Ok(false)
+    } else {
+        download_to_cache(client, url, cached_path, sha256).await?;
+        Ok(true)
+    }
 }
 
 async fn verify_cached_package(path: &Path, expected: Option<Sha256Hash>) -> Result<bool> {
@@ -261,6 +277,27 @@ async fn download_to_cache(
     fs::rename(&temp_path, cached_path)
         .await
         .with_context(|| format!("failed to persist {}", cached_path.display()))?;
+
+    Ok(())
+}
+
+async fn copy_file_url_to_cache(
+    parsed: &Url,
+    source_url: &str,
+    cached_path: &Path,
+    sha256: Option<Sha256Hash>,
+) -> Result<()> {
+    let source_path = parsed.to_file_path().map_err(|_| {
+        anyhow::anyhow!("file URL '{source_url}' does not contain a valid local path")
+    })?;
+
+    fs::copy(&source_path, cached_path)
+        .await
+        .with_context(|| format!("failed to copy package from {}", source_path.display()))?;
+
+    if sha256.is_some() && !verify_cached_package(cached_path, sha256).await? {
+        bail!("local package '{source_url}' failed checksum validation");
+    }
 
     Ok(())
 }
