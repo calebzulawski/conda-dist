@@ -239,7 +239,7 @@ pub struct PackageBuildConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PackageImageConfig {
-    #[serde(rename = "type", alias = "package-type", alias = "package_type")]
+    #[serde(rename = "type")]
     pub package_type: PackageFormat,
     pub image: String,
 }

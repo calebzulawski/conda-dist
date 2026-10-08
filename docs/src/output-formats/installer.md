@@ -11,9 +11,18 @@ conda-dist installer examples/tar.toml
 ./tar-env/bin/tar --version
 ```
 
-The command caches downloads and writes installers to the manifest directory.
 Each installer unpacks the bundled environment into the installation path you
 provide, with no external runtime requirements.
+
+Installers include all their components by default. Select individual
+components with `--components`, use `none` for the base alone, or run the subset
+installer:
+
+```bash
+./examples/portable-tar-linux-64 ./tar-gzip --components gzip
+./examples/portable-tar-linux-64 ./tar-base --components none
+./examples/portable-tar-compressed-linux-64 ./tar-compressed
+```
 
 ## Characteristics
 
