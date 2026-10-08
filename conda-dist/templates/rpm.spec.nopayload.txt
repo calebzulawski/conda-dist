@@ -21,6 +21,10 @@ Provides: {{ provide }}
 {% endfor %}
 {% endif %}
 
+{% for conflict in conflicts %}
+Conflicts: {{ conflict }}
+{% endfor %}
+
 %description
 {{ description_parts|join_paragraphs|rpm_escape }}
 

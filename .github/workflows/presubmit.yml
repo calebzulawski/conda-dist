@@ -41,8 +41,8 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
-      - name: Run CLI tests
-        run: cargo test -p conda-dist --test cli
+      - name: Run workspace tests
+        run: cargo test --workspace
 
   bootstrap-installer:
     name: Build installers for release
@@ -153,12 +153,14 @@ jobs:
           name: conda-dist-${{ matrix.platform }}
           path: release
       - name: Build example installers
-        run: chmod +x release/conda-dist && release/conda-dist installer examples/bash.toml
+        run: |
+          chmod +x release/conda-dist
+          release/conda-dist installer examples/tar.toml --output-dir installers
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
           name: installers-built-on-${{ matrix.platform }}
-          path: examples/portable-bash-*
+          path: installers
           if-no-files-found: error
 
   build-container-images:
@@ -195,16 +197,13 @@ jobs:
         env:
           RUNTIME: ${{ matrix.runtime }}
         run: |
-          mkdir -p containers
           ENGINE=$(command -v "$RUNTIME")
-          OUTPUT=containers/portable-bash-${RUNTIME}.oci.tar
-          echo "OUTPUT_FILE=$OUTPUT" >> "$GITHUB_ENV"
-          release/conda-dist container examples/bash.toml --engine "$ENGINE" --oci-output "$OUTPUT"
+          release/conda-dist container examples/tar.toml --engine "$ENGINE"
       - name: Upload container image
         uses: actions/upload-artifact@v4
         with:
           name: container-${{ matrix.runtime }}
-          path: ${{ env.OUTPUT_FILE }}
+          path: examples/portable-tar*-container.oci.tar
           if-no-files-found: error
 
   build-native-packages:
@@ -213,11 +212,6 @@ jobs:
     runs-on: ${{ matrix.platform.os }}
     strategy:
       matrix:
-        manifest:
-          - path: examples/bash.toml
-            artifact: native-packages
-          - path: examples/bash-split-deps.toml
-            artifact: native-packages-split
         platform:
           - os: ubuntu-24.04
             platform: linux-64
@@ -235,12 +229,12 @@ jobs:
         run: chmod +x release/conda-dist
       - name: Build native packages
         run: |
-          release/conda-dist package ${{ matrix.manifest.path }} \
+          release/conda-dist package examples/tar.toml \
             --output-dir native-packages
       - name: Upload native packages
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.manifest.artifact }}-${{ matrix.platform.platform }}
+          name: native-packages-${{ matrix.platform.platform }}
           path: native-packages
           if-no-files-found: error
 
@@ -269,12 +263,20 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           name: installers-built-on-${{ matrix.from }}
-      - name: Run installer
+      - name: Test installer components and subsets
         run: |
-          chmod +x portable-bash-${{ matrix.host.platform }}
-          ./portable-bash-${{ matrix.host.platform }} install-dir
-      - name: Test installation
-        run: install-dir/bin/bash --version
+          chmod +x portable-tar*-${{ matrix.host.platform }}
+          printf 'portable archive\n' > payload
+          ./portable-tar-${{ matrix.host.platform }} gzip --components gzip
+          PATH="$PWD/gzip/bin" gzip/bin/tar --gzip -cf archive.tar.gz payload
+          test "$(PATH="$PWD/gzip/bin" gzip/bin/tar -xOf archive.tar.gz payload)" = 'portable archive'
+          test ! -e gzip/bin/zstd
+          ./portable-tar-compressed-${{ matrix.host.platform }} subset
+          export PATH="$PWD/subset/bin"
+          for scheme in gzip zstd; do
+            tar --"$scheme" -cf archive.tar.$scheme payload
+            test "$(tar -xOf archive.tar.$scheme payload)" = 'portable archive'
+          done
 
   test-native-packages:
     name: Test example native packages
@@ -286,30 +288,42 @@ jobs:
         image:
           - container: redhat/ubi10
             package_subdir: redhat
-            install: dnf install -y
+            manager: dnf
+            replace_flags: --allowerasing
           - container: ubuntu:24.04
             package_subdir: ubuntu
-            install: apt install -y
+            manager: apt
         platform:
           - os: ubuntu-24.04
             platform: linux-64
           - os: ubuntu-24.04-arm
             platform: linux-aarch64
-        artifact:
-          - native-packages
-          - native-packages-split
     container: ${{ matrix.image.container }}
     steps:
       - name: Download native packages
         uses: actions/download-artifact@v5
         with:
-          name: ${{ matrix.artifact }}-${{ matrix.platform.platform }}
+          name: native-packages-${{ matrix.platform.platform }}
           path: native-packages
-      - name: Install package
+      - name: Test native package components and subsets
+        shell: bash
         run: |
-          ${{ matrix.image.install }} $GITHUB_WORKSPACE/native-packages/${{ matrix.image.package_subdir }}/*
-      - name: Run package test
-        run: /opt/portable-bash/bin/bash --version
+          BUNDLE="$GITHUB_WORKSPACE/native-packages/bundle/${{ matrix.image.package_subdir }}"
+          MODULAR="$GITHUB_WORKSPACE/native-packages/modular/${{ matrix.image.package_subdir }}"
+          printf 'portable archive\n' > payload
+          if ${{ matrix.image.manager }} install -y "$BUNDLE"/portable-tar[-_][0-9]* "$BUNDLE"/portable-tar-compressed*; then exit 1; fi
+          ${{ matrix.image.manager }} install -y "$BUNDLE"/portable-tar[-_][0-9]*
+          /opt/portable-tar/bin/tar --version
+          test ! -e /opt/portable-tar/bin/gzip
+          test ! -e /opt/portable-tar/bin/zstd
+          ${{ matrix.image.manager }} install -y ${{ matrix.image.replace_flags }} "$BUNDLE"/portable-tar-compressed*
+          PATH=/opt/portable-tar/bin /opt/portable-tar/bin/tar --gzip -cf archive.tar.gz payload
+          test "$(PATH=/opt/portable-tar/bin /opt/portable-tar/bin/tar -xOf archive.tar.gz payload)" = 'portable archive'
+          ${{ matrix.image.manager }} remove -y portable-tar-compressed
+          if ${{ matrix.image.manager }} install -y "$MODULAR"/portable-tar[-_][0-9]* "$MODULAR"/portable-tar-conda-* "$BUNDLE"/portable-tar-compressed*; then exit 1; fi
+          ${{ matrix.image.manager }} install -y "$MODULAR"/*
+          PATH=/opt/portable-tar/bin /opt/portable-tar/bin/tar --zstd -cf archive.tar.zst payload
+          test "$(PATH=/opt/portable-tar/bin /opt/portable-tar/bin/tar -xOf archive.tar.zst payload)" = 'portable archive'
 
   test-container-images:
     name: Test example container images
@@ -348,9 +362,21 @@ jobs:
         with:
           name: container-${{ matrix.source }}
           path: containers
-      - name: Load image
+      - name: Test base and subset images
+        shell: bash
         run: |
-          docker image rm -f registry.example.com/example/portable-bash:1.0.0 || true
-          skopeo copy oci-archive:containers/portable-bash-${{ matrix.source }}.oci.tar ${{ matrix.storage }}:registry.example.com/example/portable-bash:1.0.0
-      - name: Run container test
-        run: ${{ matrix.runtime }} run --rm registry.example.com/example/portable-bash:1.0.0 /opt/portable-bash/bin/bash --version
+          for NAME in portable-tar portable-tar-compressed; do
+            IMAGE=docker.io/library/$NAME:1.0.0
+            skopeo copy oci-archive:containers/$NAME-container.oci.tar ${{ matrix.storage }}:$IMAGE
+            ${{ matrix.runtime }} run --rm --env PATH=/opt/portable-tar/bin "$IMAGE" /bin/sh -ec '
+              printf "portable archive\n" > payload
+              tar -cf archive.tar payload
+              test "$(tar -xOf archive.tar payload)" = "portable archive"
+              if [ "$1" = portable-tar-compressed ]; then
+                for OPTION in --gzip --zstd; do
+                  tar "$OPTION" -cf archive.tar payload
+                  test "$(tar -xOf archive.tar payload)" = "portable archive"
+                done
+              fi
+            ' sh "$NAME"
+          done

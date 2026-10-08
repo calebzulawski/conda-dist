@@ -3,11 +3,12 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
-use rattler_conda_types::{PackageName, PackageRecord, Platform};
+use rattler_conda_types::Platform;
 
 use super::{
-    model::{DependencyPackage, install_prefix, split_package_name},
-    render,
+    bundle,
+    model::{DependencyPackage, PackageMode, install_prefix, split_package_name},
+    modular, render,
 };
 use crate::config::PackageFormat;
 
@@ -22,9 +23,11 @@ pub struct NativeBuild {
     pub installer_path: PathBuf,
     pub packaging_root: PathBuf,
     pub plan_rel: PathBuf,
+    pub subset: Option<String>,
+    pub mode: PackageMode,
 }
 
-struct ManifestLayout {
+pub(super) struct ManifestLayout {
     packaging_root: PathBuf,
     root: PathBuf,
     format: PackageFormat,
@@ -38,11 +41,13 @@ struct ManifestLayout {
 impl ManifestLayout {
     fn new(
         packaging_root: &Path,
+        mode: PackageMode,
         format: PackageFormat,
         platform: Platform,
         image_name: &str,
     ) -> Self {
         let root = packaging_root
+            .join(mode.label())
             .join(format.label())
             .join(platform.as_str())
             .join(image_name);
@@ -106,62 +111,71 @@ pub struct BasePackageMetadata<'a> {
     pub dependencies: &'a [rattler_conda_types::PackageRecord],
     pub provides: &'a [String],
     pub base_full: bool,
+    pub conflicts: &'a [String],
 }
 
-/// Write the package_plan.tsv describing per-package inputs for a single image/platform run.
+pub struct PackagePlanInput<'a> {
+    pub mode: PackageMode,
+    pub subset: Option<&'a str>,
+    pub dependency_packages: &'a [DependencyPackage],
+}
+
+/// Write metadata for a bundle or a complete modular package family.
 pub fn write_package_plan(
     format: PackageFormat,
     image_name: &str,
     platform: Platform,
     packaging_root: &Path,
-    dependency_packages: &[DependencyPackage],
+    input: PackagePlanInput<'_>,
     manifest_ctx: &crate::app::context::ManifestContext,
     prep: &crate::app::environment::EnvironmentPreparation,
 ) -> Result<PathBuf> {
-    let base_full = !manifest_ctx.config.package().split_deps;
-    let layout = ManifestLayout::new(packaging_root, format, platform, image_name);
+    let config = &manifest_ctx.config;
+    let layout = ManifestLayout::new(packaging_root, input.mode, format, platform, image_name);
     layout.ensure_dirs()?;
-
-    let mut lines = Vec::new();
-
     let env_name = prep.environment_name.as_str();
     let author = super::model::package_author(manifest_ctx);
     let prefix = install_prefix(manifest_ctx, prep)?;
-    let license = manifest_ctx.config.license();
-    let release = manifest_ctx.config.package_release();
-    let base_version = super::model::base_version(manifest_ctx)?;
+    let version = super::model::base_version(manifest_ctx)?;
+    let description = super::model::base_description_parts(prep);
     let base_summary = super::model::base_summary(prep)?;
-    let base_description_parts = super::model::base_description_parts(prep);
-    let (base_dependencies, base_provides) = derive_base_deps(env_name, dependency_packages);
-    let base_ctx = BasePackageMetadata {
+    let metadata = BasePackageMetadata {
         env_name,
         author: &author,
         prefix: &prefix,
-        license,
-        release,
-        version: &base_version,
+        license: config.license(),
+        release: config.package_release(),
+        version: &version,
         summary: &base_summary,
-        description_parts: &base_description_parts,
-        dependencies: &base_dependencies,
-        provides: &base_provides,
-        base_full,
+        description_parts: &description,
+        dependencies: &[],
+        provides: &[],
+        base_full: input.mode == PackageMode::Bundle,
+        conflicts: &[],
     };
-    let base_line = write_base_entry(&layout, &base_ctx, platform)?;
-    lines.push(base_line);
-
-    for dependency in dependency_packages {
-        let line =
-            write_dependency_entry(&layout, dependency, env_name, &author, &prefix, license)?;
-        lines.push(line);
-    }
-
+    let lines = match input.mode {
+        PackageMode::Bundle => vec![bundle::write_entry(
+            &layout,
+            platform,
+            &metadata,
+            input.subset,
+        )?],
+        PackageMode::Modular => modular::write_entries(
+            &layout,
+            config,
+            prep,
+            platform,
+            &metadata,
+            input.dependency_packages,
+        )?,
+    };
     let plan_path = layout.plan_path();
     std::fs::write(&plan_path, format!("{}\n", lines.join("\n")))?;
     layout.relative_path(&plan_path)
 }
 
 /// Render the base package entry and return its package_plan.tsv line.
-fn write_base_entry(
+pub(super) fn write_base_entry(
     layout: &ManifestLayout,
     ctx: &BasePackageMetadata<'_>,
     platform: Platform,
@@ -199,7 +213,7 @@ fn write_base_entry(
 }
 
 /// Render a dependency package entry and return its package_plan.tsv line.
-fn write_dependency_entry(
+pub(super) fn write_dependency_entry(
     layout: &ManifestLayout,
     dependency: &DependencyPackage,
     env_name: &str,
@@ -227,7 +241,7 @@ fn write_dependency_entry(
                 payload_mode,
                 layout.relative_path(&spec_path)?.display(),
                 layout.relative_path(&topdir)?.display(),
-                crate::filters::normalize_rpm_release(&dependency.record.package_record.build),
+                crate::filters::normalize_rpm_release(&dependency.native_build()),
                 filelist_rel.display()
             ))
         }
@@ -245,28 +259,6 @@ fn write_dependency_entry(
             ))
         }
     }
-}
-
-/// Build the base package dependency list and lock-provides entries.
-fn derive_base_deps(
-    env_name: &str,
-    dependency_packages: &[DependencyPackage],
-) -> (Vec<PackageRecord>, Vec<String>) {
-    let mut deps = Vec::new();
-    let mut provides = Vec::new();
-    for dependency in dependency_packages {
-        let name = split_package_name(
-            env_name,
-            dependency.record.package_record.name.as_normalized(),
-        );
-        deps.push(PackageRecord::new(
-            PackageName::new_unchecked(name.clone()),
-            dependency.record.package_record.version.clone(),
-            dependency.record.package_record.build.clone(),
-        ));
-        provides.push(format!("lock-{name}"));
-    }
-    (deps, provides)
 }
 
 /// Write a payload file list rooted at the install prefix for container extraction.

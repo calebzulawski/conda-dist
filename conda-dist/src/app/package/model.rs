@@ -7,9 +7,29 @@ use std::str::FromStr;
 
 use rattler_conda_types::{Platform, RepoDataRecord, VersionWithSource};
 
+use crate::app::installer;
 use crate::app::{context::ManifestContext, environment::EnvironmentPreparation};
 use crate::config::PackageFormat;
-use crate::installer;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackageMode {
+    Bundle,
+    Modular,
+}
+
+impl PackageMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Bundle => "bundle",
+            Self::Modular => "modular",
+        }
+    }
+}
+
+/// Capability identifying mutually exclusive bundled environments.
+pub fn bundle_capability(env_name: &str) -> String {
+    format!("conda-dist-{env_name}-bundle")
+}
 
 #[derive(Debug)]
 pub struct PackageResult {
@@ -24,6 +44,15 @@ pub struct DependencyPackage {
     pub record: RepoDataRecord,
     pub files: Vec<PathBuf>,
     pub extra_build: Option<String>,
+}
+
+impl DependencyPackage {
+    pub fn native_build(&self) -> String {
+        match &self.extra_build {
+            Some(extra) => format!("{}_{extra}", self.record.package_record.build),
+            None => self.record.package_record.build.clone(),
+        }
+    }
 }
 
 /// Return the author string formatted for package metadata.
@@ -71,64 +100,13 @@ pub fn base_description_parts(prep: &EnvironmentPreparation) -> Vec<String> {
 
 /// Build the native package name for a dependency package.
 pub fn split_package_name(env_name: &str, source_name: &str) -> String {
-    format!("{}-{}", env_name, sanitize_native_name(source_name))
+    format!("{env_name}-conda-{source_name}")
 }
 
 /// Parse the manifest version as a conda version.
 pub fn base_version(manifest_ctx: &ManifestContext) -> Result<VersionWithSource> {
     VersionWithSource::from_str(manifest_ctx.config.version().trim())
         .map_err(|_| anyhow!("package version must be a valid conda version string"))
-}
-
-/// Ensure native packages are only built for supported Linux platforms.
-pub fn ensure_linux_package_platform(platform: Platform) -> Result<()> {
-    if platform == Platform::NoArch || !platform.as_str().starts_with("linux-") {
-        bail!(
-            "native package builds are only supported for linux platforms (received '{}')",
-            platform.as_str()
-        );
-    }
-    Ok(())
-}
-
-/// Normalize a string into a native package-safe name.
-pub fn sanitize_native_name(raw: &str) -> String {
-    let mut out = String::new();
-    let mut last_sep = false;
-    for ch in raw.chars() {
-        let mapped = if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '+' | '-') {
-            Some(ch.to_ascii_lowercase())
-        } else {
-            None
-        };
-        match mapped {
-            Some(value) => {
-                out.push(value);
-                last_sep = false;
-            }
-            None => {
-                if !last_sep {
-                    out.push('-');
-                    last_sep = true;
-                }
-            }
-        }
-    }
-    let trimmed = out.trim_matches('-');
-    let mut cleaned = if trimmed.is_empty() {
-        "pkg".to_string()
-    } else {
-        trimmed.to_string()
-    };
-    if !cleaned
-        .chars()
-        .next()
-        .map(|ch| ch.is_ascii_alphanumeric())
-        .unwrap_or(false)
-    {
-        cleaned = format!("pkg-{cleaned}");
-    }
-    cleaned
 }
 
 fn sanitize_single_line(input: &str) -> String {

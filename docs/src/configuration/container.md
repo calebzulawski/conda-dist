@@ -15,6 +15,3 @@ tag_template = "registry.internal.example.com/analytics/{name}:{version}-py311"
 - `tag_template` (optional) renders the final tag. Only `{name}` and
   `{version}` are recognised placeholders. The default template is 
   `{name}:{version}`.
-
-Container builds emit `<name>-container.oci.tar` alongside the manifest unless
-you override the output location on the command line.

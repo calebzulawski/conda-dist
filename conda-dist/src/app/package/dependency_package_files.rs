@@ -1,46 +1,35 @@
-//! Resolve locked package records and their file lists for split native packaging.
+//! Resolve locked package records and their file lists for modular native packaging.
 
 use std::path::PathBuf;
 
 use anyhow::Result;
 use rattler::install::PythonInfo;
 use rattler::package_cache::PackageCache;
-use rattler_conda_types::package::PathsJson;
+use rattler_conda_types::package::{LinkJson, NoArchLinks, PackageFile, PathsJson};
 use rattler_conda_types::{Platform, RepoDataRecord};
 use rattler_networking::LazyClient;
 
 use crate::{
-    app::{
-        context::ManifestContext, environment::EnvironmentPreparation,
-        package::model::DependencyPackage,
-    },
+    app::{environment::EnvironmentPreparation, package::model::DependencyPackage},
     conda,
 };
 
 /// Resolve the locked packages for a platform and return their file lists.
 pub async fn collect_dependencies(
-    manifest_ctx: &ManifestContext,
     prep: &EnvironmentPreparation,
     workspace: &crate::workspace::Workspace,
     platform: Platform,
 ) -> Result<Vec<DependencyPackage>> {
-    let solve_platforms = vec![platform, Platform::NoArch];
-    let records = conda::load_locked_packages(
-        &manifest_ctx.lockfile_path(),
-        &prep.environment_name,
-        &solve_platforms,
-    )?;
-
-    let mut selected: std::collections::BTreeMap<String, RepoDataRecord> =
-        std::collections::BTreeMap::new();
-    for record in records {
-        let subdir = record.package_record.subdir.as_str();
-        let normalized = record.package_record.name.as_normalized().to_string();
-        let replace = subdir == platform.as_str();
-        if replace || !selected.contains_key(&normalized) {
-            selected.insert(normalized, record);
-        }
-    }
+    let selected: std::collections::BTreeMap<_, _> =
+        conda::locked_packages(&prep.lockfile, "default", platform)?
+            .into_iter()
+            .map(|record| {
+                (
+                    record.package_record.name.as_normalized().to_string(),
+                    record,
+                )
+            })
+            .collect();
 
     let python_info = resolve_python_noarch_info(selected.values(), platform);
 
@@ -100,6 +89,17 @@ async fn package_files(
             *entry = info
                 .get_python_noarch_target_path(entry.as_path())
                 .into_owned();
+        }
+        let link_path = cache_lock.path().join(LinkJson::package_path());
+        if link_path.is_file()
+            && let NoArchLinks::Python(entry_points) = LinkJson::from_path(link_path)?.noarch
+        {
+            files.extend(
+                entry_points
+                    .entry_points
+                    .into_iter()
+                    .map(|entry| info.bin_dir.join(entry.command)),
+            );
         }
     }
     Ok(files)

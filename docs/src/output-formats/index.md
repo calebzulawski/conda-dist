@@ -10,4 +10,5 @@ packaging.
   an OCI archive.
 - **Native packages** — produce RPM and DEB artifacts for Linux distributions.
 
-Subsequent sections describe the behaviour and outputs of each format.
+Artifacts default to the manifest directory. Use `--output-dir <directory>` with
+installer or native package builds to write them elsewhere.

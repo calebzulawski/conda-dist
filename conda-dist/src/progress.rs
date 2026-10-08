@@ -61,6 +61,9 @@ impl Step {
 
     fn finish_success(&self, message: String) {
         self.bar.disable_steady_tick();
+        if self.bar.is_hidden() {
+            println!("[✔] {message}");
+        }
         self.bar.set_prefix("[✔]");
         self.bar.finish_with_message(message);
     }

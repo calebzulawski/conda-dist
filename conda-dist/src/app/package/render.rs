@@ -23,6 +23,7 @@ struct RpmSpecPayloadTemplate<'a> {
     description_parts: Vec<String>,
     dependencies: Vec<rattler_conda_types::PackageRecord>,
     provides: Vec<String>,
+    conflicts: Vec<String>,
     is_split: bool,
     lock_name: String,
     license: &'a str,
@@ -40,6 +41,7 @@ struct RpmSpecNoPayloadTemplate<'a> {
     description_parts: Vec<String>,
     dependencies: Vec<rattler_conda_types::PackageRecord>,
     provides: Vec<String>,
+    conflicts: Vec<String>,
     is_split: bool,
     lock_name: String,
     license: &'a str,
@@ -58,6 +60,7 @@ struct DebControlTemplate<'a> {
     dependencies: Vec<rattler_conda_types::PackageRecord>,
     extra_depends: Vec<String>,
     provides: Vec<String>,
+    conflicts: Vec<String>,
     author: &'a str,
     arch: &'a str,
 }
@@ -125,6 +128,7 @@ pub(crate) fn write_base_rpm_spec(
             description_parts: base.description_parts.to_vec(),
             dependencies: base.dependencies.to_vec(),
             provides: base.provides.to_vec(),
+            conflicts: base.conflicts.to_vec(),
             is_split,
             lock_name,
             license: base.license,
@@ -141,6 +145,7 @@ pub(crate) fn write_base_rpm_spec(
             description_parts: base.description_parts.to_vec(),
             dependencies: base.dependencies.to_vec(),
             provides: base.provides.to_vec(),
+            conflicts: base.conflicts.to_vec(),
             is_split,
             lock_name,
             license: base.license,
@@ -166,7 +171,7 @@ pub(crate) fn write_sub_rpm_spec(
     let dependencies = Vec::new();
     let provides = Vec::new();
     let version = sub.record.package_record.version.to_string();
-    let extra_build = sub_extra_build(sub);
+    let extra_build = String::new();
     let is_split = true;
     let lock_name = format!("lock-{name}");
     let rendered = RpmSpecPayloadTemplate {
@@ -177,6 +182,7 @@ pub(crate) fn write_sub_rpm_spec(
         description_parts,
         dependencies,
         provides,
+        conflicts: Vec::new(),
         is_split,
         lock_name,
         license,
@@ -206,6 +212,7 @@ pub(crate) fn write_base_deb_control(
         dependencies: base.dependencies.to_vec(),
         extra_depends: Vec::new(),
         provides: base.provides.to_vec(),
+        conflicts: base.conflicts.to_vec(),
         author: base.author,
         arch: &arch,
     }
@@ -226,8 +233,8 @@ pub(crate) fn write_sub_deb_control(
     let (summary, description_parts) = sub_summary_parts(sub);
     let provides = Vec::new();
     let version = sub.record.package_record.version.to_string();
-    let build = sub.record.package_record.build.clone();
-    let extra_build = sub_extra_build(sub);
+    let build = sub.native_build();
+    let extra_build = String::new();
     let extra_depends = vec![format!("lock-{name}")];
     let control = DebControlTemplate {
         name,
@@ -239,6 +246,7 @@ pub(crate) fn write_sub_deb_control(
         dependencies: Vec::new(),
         extra_depends,
         provides,
+        conflicts: Vec::new(),
         author,
         arch: &arch,
     }
@@ -254,11 +262,4 @@ fn sub_summary_parts(sub: &DependencyPackage) -> (String, Vec<String>) {
     );
     let description_parts = vec![summary.clone()];
     (summary, description_parts)
-}
-
-fn sub_extra_build(sub: &DependencyPackage) -> String {
-    sub.extra_build
-        .as_ref()
-        .map(|extra| format!("_{extra}"))
-        .unwrap_or_default()
 }

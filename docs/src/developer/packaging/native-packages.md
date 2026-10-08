@@ -10,39 +10,39 @@ Native packages are built in containers. The build uses a self-extracting instal
 - Inside the container, the packaging script installs the environment via the installer.
 - Inside the container, the script runs `rpmbuild` or `dpkg-deb` and writes artifacts to the output directory.
 
-## `split_deps = false` (Single Package)
+## Bundle packages
 
-When `split_deps` is disabled:
+With `package.bundle`:
 
-- The base package contains the full environment payload.
+- Each package contains its selected environment payload.
 - No per-dependency subpackages are generated.
 - The resulting RPM/DEB is self-contained.
 
-## `split_deps = true` (One Package per Conda Package)
+## Modular packages
 
-When `split_deps` is enabled:
+With `package.modular`:
 
-- The base package is a metapackage with no payload.
+- The base, component, and subset packages are metapackages with no payload.
 - One dependency package is created per conda package, containing only that package's files.
 - For Python noarch packages, the native package release is suffixed with the Python major/minor version (for example `py311`) so builds against different interpreters remain distinct.
 
-To ensure dependency packages are only installed alongside the base metapackage, conda-dist encodes a dependency cycle:
+To keep dependency packages tied to their metapackages, conda-dist encodes a dependency cycle:
 
-- The base package *depends on* each dependency package with exact version+build pins and *provides* `lock-<package>` for each dependency.
+- Base and component metapackages *depend on* their dependency packages with exact version/release pins and *provide* `lock-<package>` for each dependency. Subset metapackages depend on their component metapackages.
 - Each dependency package *depends on* its corresponding `lock-<package>` virtual provide.
 
-This makes the base package act as the lockfile while still allowing the environment to be split into native packages.
+The metapackages act as the lockfile while allowing the environment to be split into native packages.
 
 Example dependency cycle (environment name: `my-app`):
 
 ```
 my-app (metapackage)
-  Depends: my-app-numpy (= 1.26.4-0), my-app-python (= 3.12.1-0), ...
-  Provides: lock-my-app-numpy, lock-my-app-python, ...
+  Depends: my-app-conda-numpy (= 1.26.4-0), my-app-conda-python (= 3.12.1-0), ...
+  Provides: lock-my-app-conda-numpy, lock-my-app-conda-python, ...
 
-my-app-numpy
-  Depends: lock-my-app-numpy
+my-app-conda-numpy
+  Depends: lock-my-app-conda-numpy
 
-my-app-python
-  Depends: lock-my-app-python
+my-app-conda-python
+  Depends: lock-my-app-conda-python
 ```

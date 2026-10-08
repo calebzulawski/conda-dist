@@ -5,22 +5,21 @@
 ## Usage Example
 
 ```toml
-[package.images.rocky]
+[package.bundle.images.redhat]
 type = "rpm"
-image = "rockylinux:9"
+image = "redhat/ubi10"
 
-[package.images.ubuntu]
+[package.bundle.images.ubuntu]
 type = "deb"
 image = "ubuntu:24.04"
 ```
 
 ```bash
-conda-dist package app.toml
+conda-dist package examples/tar.toml
 ```
 
-Packages are written beneath `<output-dir>/<image-name>/`, grouped by the image
-name from the manifest. The output directory defaults to the manifest directory,
-and each image directory contains the generated RPM/DEB artifacts.
+Packages are written beneath `<output-dir>/<mode>/<image-name>/`, where mode is
+`bundle` or `modular`. The output directory defaults to the manifest directory.
 
 Use `--image <name>` to select a subset of images from the manifest.
 

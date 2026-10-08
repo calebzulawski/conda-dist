@@ -6,10 +6,10 @@ use clap::{FromArgMatches, Parser};
 #[derive(Debug, Parser)]
 #[command(version, disable_help_subcommand = true)]
 pub struct Cli {
-    /// Destination path for the installation
+    /// Destination path for the installation (must not already exist)
     #[arg(
         value_name = "INSTALLATION_PATH",
-        required_unless_present_any = ["summary", "list_packages", "list_packages_json"]
+        required_unless_present_any = ["summary", "list_packages", "list_packages_json", "list_components"]
     )]
     pub prefix: Option<PathBuf>,
 
@@ -24,6 +24,14 @@ pub struct Cli {
     /// List all packages contained in the bundle as JSON and exit
     #[arg(long = "list-packages-json")]
     pub list_packages_json: bool,
+
+    /// List available components
+    #[arg(long)]
+    pub list_components: bool,
+
+    /// Comma-separated components to install, or 'all' (default) or 'none'
+    #[arg(long, value_name = "NAMES|all|none", value_delimiter = ',')]
+    pub components: Option<Vec<String>>,
 }
 
 pub fn parse(project_name: &str) -> Result<Cli> {

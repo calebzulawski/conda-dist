@@ -1,0 +1,42 @@
+name = "portable-tar"
+version = "1.0.0"
+author = "Example Maintainers"
+channels = ["conda-forge"]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64"]
+
+[dependencies]
+tar = "*"
+
+[components.gzip.dependencies]
+gzip = "*"
+
+[components.zstd.dependencies]
+zstd = "*"
+
+[subsets.compressed]
+components = ["gzip", "zstd"]
+
+# tar launches compression helpers through /bin/sh.
+[container]
+base_image = "debian:bookworm-slim"
+
+[package.bundle.images.redhat]
+type = "rpm"
+image = "redhat/ubi10"
+
+[package.bundle.images.ubuntu]
+type = "deb"
+image = "ubuntu:24.04"
+
+[package.modular.images.redhat]
+type = "rpm"
+image = "redhat/ubi10"
+
+[package.modular.images.ubuntu]
+type = "deb"
+image = "ubuntu:24.04"
+
+[metadata]
+summary = "Portable Tar"
+description = "GNU tar with optional gzip and Zstandard compression."
+featured_packages = ["tar"]

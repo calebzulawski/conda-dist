@@ -4,7 +4,7 @@ use std::{path::Path, time::SystemTime};
 
 use super::{
     OUTPUT_DEST_PATH,
-    model::PackageResult,
+    model::{PackageMode, PackageResult},
     plan::NativeBuild,
     runtime::{self, RuntimeBinary, RuntimeEngine},
 };
@@ -46,6 +46,17 @@ pub async fn run_package(
     ));
 
     cmd.arg("--env").arg(format!("PKG_PREFIX={prefix}"));
+    cmd.arg("--env").arg(format!(
+        "PKG_SPLIT_DEPS={}",
+        if job.mode == PackageMode::Modular {
+            "1"
+        } else {
+            "0"
+        }
+    ));
+    if let Some(subset) = &job.subset {
+        cmd.arg("--env").arg(format!("PKG_SUBSET={subset}"));
+    }
     cmd.arg("--mount").arg(format!(
         "type=bind,src={},dst={},ro",
         job.installer_path.display(),

@@ -1,19 +1,19 @@
 # Container Images
 
-`conda-dist container <manifest>` builds an OCI image from the manifest.
+`conda-dist container <manifest>` builds OCI images from the manifest.
 
 ## Usage Example
 
 ```bash
-conda-dist container app.toml
-skopeo copy oci-archive:app-container.oci.tar docker-daemon://app:1.0.0
-docker run app:1.0.0 env/bin/python --version
+conda-dist container examples/tar.toml
+skopeo copy oci-archive:examples/portable-tar-compressed-container.oci.tar docker-daemon:portable-tar-compressed:1.0.0
+docker run --rm portable-tar-compressed:1.0.0 tar --version
 ```
 
 `conda-dist container` stages the resolved environment on the configured base
-image and writes an OCI archive (default `<name>-container.oci.tar` alongside
-the manifest). The example uses `skopeo` to load the archive into a Docker
-daemon; any OCI-aware transport can be substituted.
+image and writes `<name>[-<subset>]-container.oci.tar`.
+The example uses `skopeo` to load the archive into a Docker daemon; any OCI-aware
+transport can be substituted.
 
 ## Characteristics
 

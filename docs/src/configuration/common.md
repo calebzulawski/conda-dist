@@ -23,9 +23,36 @@ Declare package requirements with a table of Conda match specs:
 
 ```toml
 [dependencies]
-python = "3.11.*"
-pandas = "^2.2"
+tar = "*"
 ```
+
+## Components and subsets
+
+Components add optional packages to `[dependencies]`. All components are solved
+together, keeping shared package versions consistent.
+
+```toml
+[components.gzip.dependencies]
+gzip = "*"
+
+[components.zstd.dependencies]
+zstd = "*"
+
+[subsets.compressed]
+components = ["gzip", "zstd"]
+```
+
+Here, the base provides GNU tar, and `compressed` adds gzip and Zstandard
+support. Components remain individually selectable; subsets define the
+contents of each artifact. Components can include other components with
+`includes = ["other-component"]`.
+
+Installers include all components by default and also produce a
+`<name>-<subset>-<platform>` installer containing each subset's components.
+Each installer installs its whole collection unless a component selection is
+provided. Container and bundled native builds produce the base artifact plus one
+`<name>-<subset>` artifact per subset. With `package.modular`, components and
+subsets become separately installable metapackages.
 
 ## Metadata
 
@@ -36,7 +63,7 @@ Populate optional descriptive fields for installers and summary output:
 summary = "MyApp command suite"
 description = "Command-line utilities for data preparation."
 release_notes = "- Initial publication."
-featured_packages = ["python", "pandas"]
+featured_packages = ["tar"]
 ```
 
 ## Virtual packages
@@ -64,21 +91,19 @@ Configure native RPM/DEB packaging:
 
 ```toml
 [package]
-split_deps = false
 release = "1"
 
-[package.images.rocky]
+[package.bundle.images.rocky]
 type = "rpm"
 image = "rockylinux:9"
 
-[package.images.ubuntu]
+[package.modular.images.ubuntu]
 type = "deb"
 image = "ubuntu:24.04"
 ```
 
-When enabled, `split_deps` emits a metapackage plus individual native packages
-for each transitive dependency.
-The optional `release` field controls the RPM/DEB release suffix applied to the
-base package (defaults to `1`).
-Each entry under `package.images` defines a container image keyed by name; the
-name is used as the output subdirectory.
+`package.bundle` produces complete base and subset environments.
+`package.modular` produces metapackages and shared dependency packages.
+The optional `release` field controls the RPM/DEB release suffix (defaults to `1`).
+Each mode defines build images by name. Outputs go under `bundle/<image-name>/`
+or `modular/<image-name>/`. Both modes may be configured together.

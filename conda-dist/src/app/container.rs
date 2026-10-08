@@ -1,5 +1,6 @@
 use std::{
-    env, fs,
+    collections::BTreeMap,
+    fs,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -9,14 +10,14 @@ use askama::Template;
 use rattler_conda_types::Platform;
 
 use crate::{
-    cli::ContainerArgs, config::ContainerConfig, installer, progress::Progress,
-    workspace::Workspace,
+    cli::ContainerArgs, config::ContainerConfig, progress::Progress, workspace::Workspace,
 };
 
 use super::{
-    LockMode,
+    LockMode, artifact_name,
     context::{ManifestContext, load_manifest_context},
     environment::prepare_environment,
+    installer::prepare_installers,
     runtime::{self, RuntimeBinary, RuntimeEngine},
 };
 
@@ -27,29 +28,16 @@ pub async fn execute(
     engine_flags: Vec<String>,
     lock_mode: LockMode,
 ) -> Result<()> {
-    let ContainerArgs {
-        manifest,
-        platform,
-        oci_output,
-    } = args;
-
+    let ContainerArgs { manifest, platform } = args;
     let manifest_ctx = load_manifest_context(manifest)?;
-    let container_cfg = manifest_ctx.config.container().cloned().unwrap_or_default();
+    let config = &manifest_ctx.config;
+    let container_cfg = config.container().cloned().unwrap_or_default();
     let workspace = Workspace::from_manifest_dir(&manifest_ctx.manifest_dir, work_dir)?;
-
     let target_platforms = resolve_target_platforms(&manifest_ctx, platform)?;
-
     let runtime_binary = runtime::resolve_runtime(engine, engine_flags)?;
-    let image_tag = derive_image_tag(&manifest_ctx, &container_cfg)?;
-    let runtime = RuntimeConfig {
-        binary: runtime_binary,
-        tag: image_tag,
-    };
-
+    let artifacts = plan_images(&manifest_ctx, &container_cfg)?;
     let progress = Progress::stdout();
-    let mut final_messages = Vec::new();
-
-    let (prep, _, _) = prepare_environment(
+    let prep = prepare_environment(
         &manifest_ctx,
         &workspace,
         target_platforms.clone(),
@@ -57,51 +45,6 @@ pub async fn execute(
         &progress,
     )
     .await?;
-
-    let oci_output_path = match oci_output {
-        Some(path) => {
-            if path.is_absolute() {
-                path
-            } else {
-                env::current_dir()?.join(path)
-            }
-        }
-        None => manifest_ctx
-            .manifest_dir
-            .join(format!("{}-container.oci.tar", prep.environment_name)),
-    };
-
-    let platform_summary = runtime::format_platform_list(&target_platforms);
-
-    let installer_label = format!("Prepare installer bundle [{platform_summary}]");
-    let installer_step = progress.step(installer_label.clone());
-    let prep_ref = &prep;
-    let installer_platforms = target_platforms.clone();
-    let total_installers = installer_platforms.len();
-    let installers = installer_step
-        .run_with(
-            Some(Duration::from_millis(120)),
-            {
-                move |handle| async move {
-                    let mut counter = handle.counter(total_installers);
-                    let installer_dir = prep_ref.staging_dir.path().join("installers");
-                    let paths = installer::create_installers(
-                        &installer_dir,
-                        &prep_ref.environment_name,
-                        &prep_ref.channel_dir,
-                        &installer_platforms,
-                        &prep_ref.bundle_metadata,
-                        &mut counter,
-                    )?;
-                    let installers: Vec<(Platform, PathBuf)> =
-                        installer_platforms.iter().copied().zip(paths).collect();
-                    Ok(installers)
-                }
-            },
-            move |_| installer_label.clone(),
-        )
-        .await?;
-
     let install_prefix = container_cfg
         .prefix
         .clone()
@@ -109,46 +52,93 @@ pub async fn execute(
     if !install_prefix.starts_with('/') {
         bail!("container prefix '{install_prefix}' must be an absolute path");
     }
-
-    let context_dir = prepare_build_directory(&workspace, &prep.environment_name)?;
-    let build_context = create_build_context(
-        &context_dir,
-        &installers,
-        &container_cfg,
-        &install_prefix,
-        &prep.environment_name,
-        oci_output_path.clone(),
-    )?;
-
-    let build_step = progress.step("Build container image");
-    let runtime_ref = &runtime;
-    let build_context_ref = &build_context;
-    let build_platforms = target_platforms.clone();
-    let platform_count = build_platforms.len();
-    let archive_path = build_step
-        .run(
-            Some(Duration::from_millis(120)),
-            async move { build_image(runtime_ref, build_context_ref, &build_platforms).await },
-            |_| "Build container image (1/1)".to_string(),
-        )
-        .await?;
-
-    final_messages.push(format!(
-        "Container image '{}' prepared for {} linux platform(s): {}.",
-        runtime.tag, platform_count, platform_summary
-    ));
-    final_messages.push(format!(
-        "Multi-platform OCI archive written to {}",
-        archive_path.display()
-    ));
-
+    let installers_root = prep.staging_dir.path().join("installers");
+    let installers = prepare_installers(&prep, config, &installers_root, &progress).await?;
+    let mut messages = Vec::new();
+    for ImageArtifact {
+        subset,
+        name,
+        tag,
+        archive,
+    } in artifacts
+    {
+        let runtime = RuntimeConfig {
+            binary: runtime_binary.clone(),
+            tag,
+        };
+        let context_dir = prepare_build_directory(&workspace, &name)?;
+        let context = create_build_context(
+            &context_dir,
+            installers
+                .get(&name)
+                .with_context(|| format!("missing installer for {name}"))?,
+            &container_cfg,
+            &install_prefix,
+            &name,
+            archive,
+            subset,
+        )?;
+        let archive = progress
+            .step(format!("Build container image {name}"))
+            .run(
+                Some(Duration::from_millis(120)),
+                build_image(&runtime, &context, &target_platforms),
+                |_| format!("Build container image {name} (1/1)"),
+            )
+            .await?;
+        messages.push(format!(
+            "Container image '{}' prepared for {} linux platform(s): {}.",
+            runtime.tag,
+            target_platforms.len(),
+            runtime::format_platform_list(&target_platforms)
+        ));
+        messages.push(format!(
+            "Multi-platform OCI archive written to {}",
+            archive.display()
+        ));
+    }
     drop(progress);
-
-    for message in final_messages {
+    for message in messages {
         println!("{message}");
     }
-
     Ok(())
+}
+
+struct ImageArtifact<'a> {
+    subset: Option<&'a str>,
+    name: String,
+    tag: String,
+    archive: PathBuf,
+}
+
+fn plan_images<'a>(
+    manifest: &'a ManifestContext,
+    container: &ContainerConfig,
+) -> Result<Vec<ImageArtifact<'a>>> {
+    let config = &manifest.config;
+    let mut tags = std::collections::HashSet::new();
+    let mut artifacts = Vec::new();
+    for subset in
+        std::iter::once(None).chain(config.subsets().keys().map(|name| Some(name.as_str())))
+    {
+        let name = artifact_name(config.name(), subset);
+        let tag = derive_image_tag(&name, config.version(), container)?;
+        if !tags.insert(tag.clone()) {
+            bail!(
+                "container tag template produces duplicate tag '{tag}'; include {{name}} in the template"
+            );
+        }
+        let archive = manifest
+            .manifest_dir
+            .join(format!("{name}-container.oci.tar"));
+        artifacts.push(ImageArtifact {
+            subset,
+            name,
+            tag,
+            archive,
+        });
+    }
+    Ok(artifacts)
 }
 
 fn resolve_target_platforms(
@@ -161,6 +151,9 @@ fn resolve_target_platforms(
                 "container builds are only supported for linux platforms (received '{}')",
                 platform.as_str()
             );
+        }
+        if !manifest_ctx.config.platforms().contains(&platform) {
+            bail!("selected platform '{platform}' is not listed in the manifest platforms");
         }
         Ok(vec![platform])
     } else {
@@ -188,12 +181,8 @@ struct RuntimeConfig {
     tag: String,
 }
 
-fn derive_image_tag(
-    manifest_ctx: &ManifestContext,
-    container_cfg: &ContainerConfig,
-) -> Result<String> {
-    let name = manifest_ctx.config.name();
-    let version = manifest_ctx.config.version().trim();
+fn derive_image_tag(name: &str, version: &str, container_cfg: &ContainerConfig) -> Result<String> {
+    let version = version.trim();
 
     let template = container_cfg.tag_template.trim();
     if template.is_empty() {
@@ -259,20 +248,52 @@ struct ContainerDockerfileTemplate<'a> {
     base_image: &'a str,
     prefix: &'a str,
     title: &'a str,
+    installer_command: String,
 }
 
 fn create_build_context(
     context_dir: &Path,
-    installers: &[(Platform, PathBuf)],
+    installers: &BTreeMap<Platform, PathBuf>,
     container_cfg: &ContainerConfig,
     install_prefix: &str,
     environment_name: &str,
     oci_archive: PathBuf,
+    subset: Option<&str>,
 ) -> Result<BuildContext> {
     let dockerfile_path = context_dir.join("Dockerfile");
     let installers_dir = context_dir.join("installers");
+    stage_installers(&installers_dir, installers)?;
 
-    fs::create_dir_all(&installers_dir).with_context(|| {
+    let dockerfile_contents = ContainerDockerfileTemplate {
+        base_image: &container_cfg.base_image,
+        prefix: install_prefix,
+        title: environment_name,
+        installer_command: serde_json::to_string(&match subset {
+            Some(_) => vec!["/tmp/installer", install_prefix],
+            None => vec!["/tmp/installer", install_prefix, "--components", "none"],
+        })?,
+    }
+    .render()?;
+
+    fs::write(&dockerfile_path, dockerfile_contents).with_context(|| {
+        format!(
+            "failed to write Dockerfile to {}",
+            dockerfile_path.display()
+        )
+    })?;
+
+    if fs::metadata(&dockerfile_path)?.len() == 0 {
+        bail!("generated Dockerfile was unexpectedly empty");
+    }
+
+    Ok(BuildContext {
+        dir: context_dir.to_path_buf(),
+        oci_archive,
+    })
+}
+
+fn stage_installers(installers_dir: &Path, installers: &BTreeMap<Platform, PathBuf>) -> Result<()> {
+    fs::create_dir_all(installers_dir).with_context(|| {
         format!(
             "failed to prepare installers directory {}",
             installers_dir.display()
@@ -304,46 +325,7 @@ fn create_build_context(
         }
     }
 
-    let dockerfile_contents = ContainerDockerfileTemplate {
-        base_image: &container_cfg.base_image,
-        prefix: install_prefix,
-        title: environment_name,
-    }
-    .render()?;
-
-    fs::write(&dockerfile_path, dockerfile_contents).with_context(|| {
-        format!(
-            "failed to write Dockerfile to {}",
-            dockerfile_path.display()
-        )
-    })?;
-
-    if fs::metadata(&dockerfile_path)?.len() == 0 {
-        bail!("generated Dockerfile was unexpectedly empty");
-    }
-
-    if let Some(parent) = oci_archive.parent() {
-        fs::create_dir_all(parent).with_context(|| {
-            format!(
-                "failed to prepare container artifact directory {}",
-                parent.display()
-            )
-        })?;
-    }
-
-    if oci_archive.exists() {
-        fs::remove_file(&oci_archive).with_context(|| {
-            format!(
-                "failed to remove existing OCI archive {}",
-                oci_archive.display()
-            )
-        })?;
-    }
-
-    Ok(BuildContext {
-        dir: context_dir.to_path_buf(),
-        oci_archive,
-    })
+    Ok(())
 }
 
 async fn build_image(
@@ -460,26 +442,7 @@ async fn build_with_podman(
 }
 
 async fn podman_save_image(runtime: &RuntimeConfig, output_path: &Path) -> Result<()> {
-    let archive_path = if output_path.is_absolute() {
-        output_path.to_path_buf()
-    } else {
-        env::current_dir()
-            .context("failed to resolve working directory for podman manifest push")?
-            .join(output_path)
-    };
-
-    if let Some(parent) = archive_path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        fs::create_dir_all(parent).with_context(|| {
-            format!(
-                "failed to prepare directory {} for podman export",
-                parent.display()
-            )
-        })?;
-    }
-
-    let archive_spec = format!("oci-archive:{}", archive_path.to_string_lossy());
+    let archive_spec = format!("oci-archive:{}", output_path.to_string_lossy());
 
     let mut cmd = runtime.binary.command();
     cmd.arg("manifest")

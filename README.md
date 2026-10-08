@@ -20,17 +20,17 @@ For a complete reference, see the [manual](https://calebzulawski.github.io/conda
 
 ## Example
 
-To package bash, create bash.toml:
+To package GNU tar, create `tar.toml`:
 
 ```toml
-name = "bash"
+name = "portable-tar"
 version = "1.0.0"
 author = "Example Maintainers"
 channels = ["conda-forge"]
 platforms = ["linux-64"]
 
 [dependencies]
-bash = "*"
+tar = "*"
 ```
 
 ### Installer
@@ -38,17 +38,14 @@ bash = "*"
 To create a portable installer, run:
 
 ```bash
-conda-dist installer bash.toml
+conda-dist installer tar.toml
 ```
 
-To install the bash application:
-
-Invoke the generated `bash-linux-64` executable and point it at an install
-directory:
+Install the environment:
 
 ```bash
-./bash-linux-64 <install dir>
-<install dir>/bin/bash --version
+./portable-tar-linux-64 ./tar-env
+./tar-env/bin/tar --version
 ```
 
 ### Docker Image
@@ -56,13 +53,9 @@ directory:
 To create a docker image, run:
 
 ```bash
-conda-dist container bash.toml
-```
-
-The generated image contains just the bash application:
-
-```bash
-docker run bash:1.0.0 bash -c "echo hello"
+conda-dist container tar.toml
+skopeo copy oci-archive:portable-tar-container.oci.tar docker-daemon:portable-tar:1.0.0
+docker run --rm portable-tar:1.0.0 tar --version
 ```
 
 ### Native Packages
@@ -70,19 +63,19 @@ docker run bash:1.0.0 bash -c "echo hello"
 Define package images in the manifest:
 
 ```toml
-[package.images.rocky]
+[package.bundle.images.redhat]
 type = "rpm"
-image = "rockylinux:9"
+image = "redhat/ubi10"
 
-[package.images.ubuntu]
+[package.bundle.images.ubuntu]
 type = "deb"
-image = "ubuntu:22.04"
+image = "ubuntu:24.04"
 ```
 
 Then create native RPM and DEB artifacts:
 
 ```bash
-conda-dist package bash.toml
+conda-dist package tar.toml
 ```
 
 ### Lockfile Maintenance
@@ -90,13 +83,13 @@ conda-dist package bash.toml
 To refresh the manifest lockfile without producing artifacts, run:
 
 ```bash
-conda-dist lock bash.toml
+conda-dist lock tar.toml
 ```
 
 Use the global `--locked` flag to assert the lockfile is current:
 
 ```bash
-conda-dist --locked lock bash.toml
+conda-dist --locked lock tar.toml
 ```
 
 ## License
