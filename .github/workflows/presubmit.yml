@@ -28,9 +28,8 @@ jobs:
       - name: Cargo clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-  cli-tests:
-    name: CLI tests
-    needs: bootstrap-installer
+  workspace-tests:
+    name: Workspace tests
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
@@ -239,11 +238,21 @@ jobs:
           if-no-files-found: error
 
   test-installers:
-    name: Test example application installers
+    name: Test installer (${{ matrix.installation.name }}, ${{ matrix.from }} → ${{ matrix.host.platform }})
     needs: build-installers
     runs-on: ${{ matrix.host.os }}
     strategy:
+      fail-fast: false
       matrix:
+        installation:
+          - name: gzip component
+            bundle: portable-tar
+            components: gzip
+            zstd: false
+          - name: compressed subset
+            bundle: portable-tar-compressed
+            components: all
+            zstd: true
         host:
           - os: ubuntu-24.04
             platform: linux-64
@@ -263,36 +272,48 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           name: installers-built-on-${{ matrix.from }}
-      - name: Test installer components and subsets
+      - name: Run installer
         run: |
-          chmod +x portable-tar*-${{ matrix.host.platform }}
-          printf 'portable archive\n' > payload
-          ./portable-tar-${{ matrix.host.platform }} gzip --components gzip
-          PATH="$PWD/gzip/bin" gzip/bin/tar --gzip -cf archive.tar.gz payload
-          test "$(PATH="$PWD/gzip/bin" gzip/bin/tar -xOf archive.tar.gz payload)" = 'portable archive'
-          test ! -e gzip/bin/zstd
-          ./portable-tar-compressed-${{ matrix.host.platform }} subset
-          export PATH="$PWD/subset/bin"
-          for scheme in gzip zstd; do
-            tar --"$scheme" -cf archive.tar.$scheme payload
-            test "$(tar -xOf archive.tar.$scheme payload)" = 'portable archive'
-          done
+          chmod +x ${{ matrix.installation.bundle }}-${{ matrix.host.platform }}
+          ./${{ matrix.installation.bundle }}-${{ matrix.host.platform }} install-dir --components ${{ matrix.installation.components }}
+      - name: Test tar
+        run: install-dir/bin/tar --version
+      - name: Test gzip compression
+        run: env PATH="$PWD/install-dir/bin" install-dir/bin/tar --gzip -cf /dev/null --files-from /dev/null
+      - name: Test zstd compression
+        if: ${{ matrix.installation.zstd }}
+        run: env PATH="$PWD/install-dir/bin" install-dir/bin/tar --zstd -cf /dev/null --files-from /dev/null
+      - name: Check unselected zstd is absent
+        if: ${{ !matrix.installation.zstd }}
+        run: test ! -e install-dir/bin/zstd
 
   test-native-packages:
-    name: Test example native packages
+    name: Test native packages (${{ matrix.installation.name }}, ${{ matrix.image.package_subdir }}, ${{ matrix.platform.platform }})
     needs: build-native-packages
     runs-on: ${{ matrix.platform.os }}
     strategy:
       fail-fast: false
       matrix:
+        installation:
+          - name: base bundle
+            mode: bundle
+            packages: portable-tar[-_][0-9]*
+            compressed: false
+          - name: compressed bundle
+            mode: bundle
+            packages: portable-tar-compressed*
+            compressed: true
+          - name: modular packages
+            mode: modular
+            packages: '*'
+            compressed: true
         image:
           - container: redhat/ubi10
             package_subdir: redhat
-            manager: dnf
-            replace_flags: --allowerasing
+            install: dnf install -y
           - container: ubuntu:24.04
             package_subdir: ubuntu
-            manager: apt
+            install: apt install -y
         platform:
           - os: ubuntu-24.04
             platform: linux-64
@@ -305,32 +326,29 @@ jobs:
         with:
           name: native-packages-${{ matrix.platform.platform }}
           path: native-packages
-      - name: Test native package components and subsets
-        shell: bash
+      - name: Install packages
+        run: ${{ matrix.image.install }} "$GITHUB_WORKSPACE/native-packages/${{ matrix.installation.mode }}/${{ matrix.image.package_subdir }}"/${{ matrix.installation.packages }}
+      - name: Test tar
+        run: /opt/portable-tar/bin/tar --version
+      - name: Test gzip compression
+        if: ${{ matrix.installation.compressed }}
+        run: env PATH=/opt/portable-tar/bin /opt/portable-tar/bin/tar --gzip -cf /dev/null --files-from /dev/null
+      - name: Test zstd compression
+        if: ${{ matrix.installation.compressed }}
+        run: env PATH=/opt/portable-tar/bin /opt/portable-tar/bin/tar --zstd -cf /dev/null --files-from /dev/null
+      - name: Check optional components are absent
+        if: ${{ !matrix.installation.compressed }}
         run: |
-          BUNDLE="$GITHUB_WORKSPACE/native-packages/bundle/${{ matrix.image.package_subdir }}"
-          MODULAR="$GITHUB_WORKSPACE/native-packages/modular/${{ matrix.image.package_subdir }}"
-          printf 'portable archive\n' > payload
-          if ${{ matrix.image.manager }} install -y "$BUNDLE"/portable-tar[-_][0-9]* "$BUNDLE"/portable-tar-compressed*; then exit 1; fi
-          ${{ matrix.image.manager }} install -y "$BUNDLE"/portable-tar[-_][0-9]*
-          /opt/portable-tar/bin/tar --version
           test ! -e /opt/portable-tar/bin/gzip
           test ! -e /opt/portable-tar/bin/zstd
-          ${{ matrix.image.manager }} install -y ${{ matrix.image.replace_flags }} "$BUNDLE"/portable-tar-compressed*
-          PATH=/opt/portable-tar/bin /opt/portable-tar/bin/tar --gzip -cf archive.tar.gz payload
-          test "$(PATH=/opt/portable-tar/bin /opt/portable-tar/bin/tar -xOf archive.tar.gz payload)" = 'portable archive'
-          ${{ matrix.image.manager }} remove -y portable-tar-compressed
-          if ${{ matrix.image.manager }} install -y "$MODULAR"/portable-tar[-_][0-9]* "$MODULAR"/portable-tar-conda-* "$BUNDLE"/portable-tar-compressed*; then exit 1; fi
-          ${{ matrix.image.manager }} install -y "$MODULAR"/*
-          PATH=/opt/portable-tar/bin /opt/portable-tar/bin/tar --zstd -cf archive.tar.zst payload
-          test "$(PATH=/opt/portable-tar/bin /opt/portable-tar/bin/tar -xOf archive.tar.zst payload)" = 'portable archive'
 
   test-container-images:
-    name: Test example container images
+    name: Test container (${{ matrix.bundle }}, ${{ matrix.source }} → ${{ matrix.runtime }}, ${{ matrix.host.arch }})
     needs: build-container-images
     strategy:
       fail-fast: false
       matrix:
+        bundle: [portable-tar, portable-tar-compressed]
         runtime: [docker, podman]
         host:
           - os: ubuntu-24.04
@@ -348,6 +366,8 @@ jobs:
               options: --privileged
     runs-on: ${{ matrix.host.os }}
     container: ${{ matrix.container || null }}
+    env:
+      IMAGE: docker.io/library/${{ matrix.bundle }}:1.0.0
     steps:
       - name: Install Docker prerequisites
         if: ${{ matrix.runtime == 'docker' }}
@@ -362,21 +382,13 @@ jobs:
         with:
           name: container-${{ matrix.source }}
           path: containers
-      - name: Test base and subset images
-        shell: bash
-        run: |
-          for NAME in portable-tar portable-tar-compressed; do
-            IMAGE=docker.io/library/$NAME:1.0.0
-            skopeo copy oci-archive:containers/$NAME-container.oci.tar ${{ matrix.storage }}:$IMAGE
-            ${{ matrix.runtime }} run --rm --env PATH=/opt/portable-tar/bin "$IMAGE" /bin/sh -ec '
-              printf "portable archive\n" > payload
-              tar -cf archive.tar payload
-              test "$(tar -xOf archive.tar payload)" = "portable archive"
-              if [ "$1" = portable-tar-compressed ]; then
-                for OPTION in --gzip --zstd; do
-                  tar "$OPTION" -cf archive.tar payload
-                  test "$(tar -xOf archive.tar payload)" = "portable archive"
-                done
-              fi
-            ' sh "$NAME"
-          done
+      - name: Load image
+        run: skopeo copy oci-archive:containers/${{ matrix.bundle }}-container.oci.tar ${{ matrix.storage }}:"$IMAGE"
+      - name: Test tar
+        run: ${{ matrix.runtime }} run --rm "$IMAGE" /opt/portable-tar/bin/tar --version
+      - name: Test gzip compression
+        if: ${{ matrix.bundle == 'portable-tar-compressed' }}
+        run: ${{ matrix.runtime }} run --rm --env PATH=/opt/portable-tar/bin "$IMAGE" /opt/portable-tar/bin/tar --gzip -cf /dev/null --files-from /dev/null
+      - name: Test zstd compression
+        if: ${{ matrix.bundle == 'portable-tar-compressed' }}
+        run: ${{ matrix.runtime }} run --rm --env PATH=/opt/portable-tar/bin "$IMAGE" /opt/portable-tar/bin/tar --zstd -cf /dev/null --files-from /dev/null
