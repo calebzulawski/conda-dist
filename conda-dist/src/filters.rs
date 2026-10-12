@@ -20,6 +20,11 @@ pub fn native_version<T: Display>(input: T, _: &dyn Values) -> Result<String> {
 }
 
 #[askama::filter_fn]
+pub fn deb_name<T: Display>(input: T, _: &dyn Values) -> Result<String> {
+    Ok(input.to_string().replace('_', "+"))
+}
+
+#[askama::filter_fn]
 pub fn deb_description<T: Display>(parts: &[String], _: &dyn Values, summary: T) -> Result<String> {
     let mut lines = Vec::new();
     lines.push(format!("Description: {}", summary));

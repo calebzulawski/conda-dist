@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     convert::TryFrom,
     env, fs,
     io::{Read, Seek, SeekFrom},
@@ -21,6 +22,8 @@ pub struct BundleData {
     pub metadata: BundleMetadata,
     pub records: Vec<RepoDataRecord>,
     pub target_platform: Platform,
+    pub base_records: Vec<RepoDataRecord>,
+    pub component_records: BTreeMap<String, Vec<RepoDataRecord>>,
     _temp_dir: TempDir,
 }
 
@@ -35,6 +38,42 @@ pub struct BundleMetadata {
     pub release_notes: Option<String>,
     #[serde(default)]
     pub featured_packages: Vec<String>,
+    #[serde(default)]
+    pub components: BTreeMap<String, Vec<String>>,
+}
+
+impl BundleData {
+    pub fn records_for_components(
+        &self,
+        explicit: Option<&[String]>,
+    ) -> Result<impl ExactSizeIterator<Item = RepoDataRecord> + '_> {
+        let selected: Vec<_> = match explicit {
+            None => self.component_records.keys().collect(),
+            Some(names) if names == ["none"] => Vec::new(),
+            Some(names) if names == ["all"] => self.component_records.keys().collect(),
+            Some(names) => {
+                if names.iter().any(|name| name == "all" || name == "none") {
+                    bail!("'all' and 'none' must be used alone in --components");
+                }
+                names.iter().collect()
+            }
+        };
+        let selections = selected
+            .into_iter()
+            .map(|name| {
+                self.component_records
+                    .get(name)
+                    .with_context(|| format!("unknown component '{name}'"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let records: BTreeMap<_, _> = self
+            .base_records
+            .iter()
+            .chain(selections.into_iter().flatten())
+            .map(|record| (record.package_record.name.as_normalized(), record))
+            .collect();
+        Ok(records.into_values().cloned())
+    }
 }
 
 fn default_author() -> String {
@@ -86,14 +125,35 @@ pub fn load_bundle() -> Result<BundleData> {
     let lockfile = LockFile::from_path(&lockfile_path)
         .with_context(|| format!("failed to read lockfile at {}", lockfile_path.display()))?;
 
-    let environment = resolve_environment(&lockfile)?;
     let target_platform = Platform::current();
+    let environment = lockfile
+        .default_environment()
+        .context("bundle default environment is missing")?;
     let records = collect_records(environment, target_platform, &channel_dir)?;
+    let base_records = collect_records(
+        lockfile
+            .environment("default:base")
+            .context("bundle base environment is missing")?,
+        target_platform,
+        &channel_dir,
+    )?;
+    let mut component_records = BTreeMap::new();
+    for name in metadata.components.keys() {
+        let environment = lockfile
+            .environment(&format!("default:component:{name}"))
+            .with_context(|| format!("component environment for '{name}' is missing"))?;
+        component_records.insert(
+            name.clone(),
+            collect_records(environment, target_platform, &channel_dir)?,
+        );
+    }
     Ok(BundleData {
         channel_dir,
         metadata,
         records,
         target_platform,
+        base_records,
+        component_records,
         _temp_dir: temp_dir,
     })
 }
@@ -191,37 +251,15 @@ fn locate_lockfile(channel_dir: &Path) -> Result<PathBuf> {
     );
 }
 
-fn resolve_environment<'lock>(
-    lockfile: &'lock LockFile,
-) -> Result<rattler_lock::Environment<'lock>> {
-    if let Some(environment) = lockfile.default_environment() {
-        return Ok(environment);
-    }
-
-    let mut environments = lockfile.environments();
-    match environments.next() {
-        None => bail!("installer bundle did not contain any installation definitions"),
-        Some((_name, environment)) if environments.next().is_none() => Ok(environment),
-        Some(_) => {
-            bail!("installer bundle is ambiguous; contact the package author for assistance")
-        }
-    }
-}
-
 fn collect_records(
     environment: rattler_lock::Environment<'_>,
     target_platform: Platform,
     channel_dir: &Path,
 ) -> Result<Vec<RepoDataRecord>> {
     let mut records = Vec::new();
-    let mut has_target_platform = false;
 
     for (platform, packages) in environment.conda_packages_by_platform() {
-        if platform == target_platform {
-            has_target_platform = true;
-        }
-
-        if platform != target_platform && platform != Platform::NoArch {
+        if platform != target_platform {
             continue;
         }
 
@@ -263,13 +301,6 @@ fn collect_records(
         }
     }
 
-    if !has_target_platform {
-        bail!(
-            "the installer bundle does not include components for platform {}",
-            target_platform.as_str()
-        );
-    }
-
     Ok(records)
 }
 
@@ -302,5 +333,71 @@ fn resolve_bundle_root(temp_parent: &Path) -> Result<PathBuf> {
         1 => Ok(dirs.remove(0)),
         0 => bail!("installer payload did not contain bundle contents"),
         _ => bail!("installer payload contained multiple bundle roots; aborting"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn existing_destinations_are_rejected_without_modification() {
+        for with_components in [false, true] {
+            let staging = tempfile::tempdir().unwrap();
+            let mut metadata: BundleMetadata =
+                serde_json::from_str(r#"{"summary":"demo"}"#).unwrap();
+            if with_components {
+                metadata.components.insert("tools".into(), Vec::new());
+            }
+            let bundle = BundleData {
+                channel_dir: staging.path().to_path_buf(),
+                metadata,
+                records: vec![],
+                target_platform: Platform::Linux64,
+                base_records: vec![],
+                component_records: BTreeMap::new(),
+                _temp_dir: staging,
+            };
+            let base_only = ["none".to_string()];
+            for kind in ["empty", "ordinary", "conda", "file"] {
+                let temp = tempfile::tempdir().unwrap();
+                let prefix = temp.path().join("prefix");
+                match kind {
+                    "empty" => fs::create_dir(&prefix).unwrap(),
+                    "ordinary" => {
+                        fs::create_dir(&prefix).unwrap();
+                        fs::write(prefix.join("marker"), "keep me").unwrap();
+                    }
+                    "conda" => {
+                        fs::create_dir_all(prefix.join("conda-meta")).unwrap();
+                        fs::write(prefix.join("marker"), "keep me").unwrap();
+                    }
+                    "file" => fs::write(&prefix, "keep me").unwrap(),
+                    _ => unreachable!(),
+                }
+                for selection in [None, Some(base_only.as_slice())] {
+                    let error = crate::operations::install(&prefix, &bundle, selection)
+                        .await
+                        .unwrap_err();
+                    assert!(
+                        error.to_string().contains("already exists"),
+                        "{kind}, components={with_components}: {error}"
+                    );
+                    match kind {
+                        "empty" => assert_eq!(fs::read_dir(&prefix).unwrap().count(), 0),
+                        "file" => assert_eq!(fs::read_to_string(&prefix).unwrap(), "keep me"),
+                        _ => {
+                            assert_eq!(
+                                fs::read_to_string(prefix.join("marker")).unwrap(),
+                                "keep me"
+                            );
+                            assert_eq!(
+                                fs::read_dir(&prefix).unwrap().count(),
+                                if kind == "conda" { 2 } else { 1 }
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 }

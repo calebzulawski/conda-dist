@@ -4,7 +4,11 @@ use anyhow::{Context, Result, bail};
 use rattler_conda_types::{Channel, ChannelConfig, MatchSpec, ParseStrictness, Platform};
 use serde::Deserialize;
 
+mod components;
+pub use components::{ComponentConfig, SubsetConfig};
+
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CondaDistConfig {
     name: String,
     author: String,
@@ -14,6 +18,10 @@ pub struct CondaDistConfig {
     channels: Vec<String>,
     platforms: Vec<Platform>,
     dependencies: DependencySpec,
+    #[serde(default)]
+    components: BTreeMap<String, ComponentConfig>,
+    #[serde(default)]
+    subsets: BTreeMap<String, SubsetConfig>,
     #[serde(default)]
     metadata: Option<BundleMetadataConfig>,
     #[serde(default)]
@@ -60,6 +68,14 @@ impl CondaDistConfig {
 
     pub fn dependencies(&self) -> &DependencySpec {
         &self.dependencies
+    }
+
+    pub fn components(&self) -> &BTreeMap<String, ComponentConfig> {
+        &self.components
+    }
+
+    pub fn subsets(&self) -> &BTreeMap<String, SubsetConfig> {
+        &self.subsets
     }
 
     pub fn metadata(&self) -> Option<&BundleMetadataConfig> {
@@ -127,15 +143,23 @@ impl CondaDistConfig {
         if let Some(container) = self.container.as_ref() {
             validators::validate_image_ref(&container.base_image, "container.base_image")?;
         }
-        for (name, image) in &self.package.images {
-            validators::validate_image_name(name)?;
-            validators::validate_image_ref(&image.image, &format!("package.images.{name}.image"))?;
+        for (mode, config) in [
+            ("bundle", &self.package.bundle),
+            ("modular", &self.package.modular),
+        ] {
+            for (name, image) in &config.images {
+                validators::validate_image_name(name)?;
+                validators::validate_image_ref(
+                    &image.image,
+                    &format!("package.{mode}.images.{name}.image"),
+                )?;
+            }
         }
-        Ok(())
+        self.validate_components()
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct DependencySpec(BTreeMap<String, String>);
 
 impl DependencySpec {
@@ -163,6 +187,7 @@ pub fn load_manifest(path: &Path) -> Result<CondaDistConfig> {
     let manifest_dir = path.parent().unwrap_or_else(|| Path::new("."));
     config.channel_config = ChannelConfig::default_with_root_dir(manifest_dir.to_path_buf());
     config.validate()?;
+    config.resolve_components()?;
     Ok(config)
 }
 
@@ -188,19 +213,33 @@ pub struct ContainerConfig {
     pub tag_template: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct PackageConfig {
-    #[serde(default)]
-    pub split_deps: bool,
-    #[serde(default = "default_package_release")]
     pub release: String,
-    #[serde(default)]
+    pub bundle: PackageBuildConfig,
+    pub modular: PackageBuildConfig,
+}
+
+impl Default for PackageConfig {
+    fn default() -> Self {
+        Self {
+            release: default_package_release(),
+            bundle: PackageBuildConfig::default(),
+            modular: PackageBuildConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct PackageBuildConfig {
     pub images: BTreeMap<String, PackageImageConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PackageImageConfig {
-    #[serde(rename = "type", alias = "package-type", alias = "package_type")]
+    #[serde(rename = "type")]
     pub package_type: PackageFormat,
     pub image: String,
 }

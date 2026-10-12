@@ -5,6 +5,18 @@ use rattler_solve::{
     ChannelPriority, RepoDataIter, SolveStrategy, SolverImpl, SolverTask, resolvo,
 };
 
+/// Select a package subset without introducing versions outside the joint solution.
+pub fn solve_from_records(
+    records: &[RepoDataRecord],
+    specs: &[MatchSpec],
+    virtual_packages: &[GenericVirtualPackage],
+) -> Result<Vec<RepoDataRecord>> {
+    let mut task = SolverTask::from_iter([records.iter()]);
+    task.specs = specs.to_vec();
+    task.virtual_packages = virtual_packages.to_vec();
+    Ok(resolvo::Solver.solve(task)?.records)
+}
+
 pub async fn solve_environment(
     gateway: &Gateway,
     channels: &[Channel],

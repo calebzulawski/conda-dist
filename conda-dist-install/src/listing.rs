@@ -15,6 +15,10 @@ pub fn print_bundle_summary(
 ) -> Result<()> {
     println!("Bundle: {}", metadata.summary);
     println!("Maintainer: {}", metadata.author);
+    if !metadata.components.is_empty() {
+        println!("Components:");
+        list_components(metadata);
+    }
 
     if let Some(description) = metadata.description.as_deref() {
         println!();
@@ -170,6 +174,18 @@ fn print_indented_lines(text: &str, indent: &str) {
             println!();
         } else {
             println!("{indent}{line}");
+        }
+    }
+}
+
+pub fn list_components(metadata: &BundleMetadata) {
+    if metadata.components.is_empty() {
+        println!("No optional components.");
+    }
+    for (name, includes) in &metadata.components {
+        println!("{name}");
+        if !includes.is_empty() {
+            println!("  includes: {}", includes.join(", "));
         }
     }
 }

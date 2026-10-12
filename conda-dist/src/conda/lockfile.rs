@@ -1,4 +1,4 @@
-use std::{path::Path, str::FromStr};
+use std::str::FromStr;
 
 use anyhow::{Context, Result, anyhow};
 use rattler_conda_types::{Platform, RepoDataRecord};
@@ -7,29 +7,19 @@ use rattler_solve::{ChannelPriority, SolveStrategy};
 
 pub const LOCKFILE_NAME: &str = "conda-lock.yml";
 
-pub fn load_locked_packages(
-    path: &Path,
+pub fn locked_packages(
+    lock_file: &LockFile,
     environment_name: &str,
-    platforms: &[Platform],
+    platform: Platform,
 ) -> Result<Vec<RepoDataRecord>> {
-    let lock_file = LockFile::from_path(path)
-        .with_context(|| format!("failed to load lockfile from {}", path.display()))?;
     let Some(environment) = lock_file.environment(environment_name) else {
         return Ok(Vec::new());
     };
 
-    let mut locked_packages = Vec::new();
-    for platform in platforms {
-        match environment
-            .conda_repodata_records(*platform)
-            .map_err(|err| anyhow!(err))?
-        {
-            Some(records) => locked_packages.extend(records),
-            None => continue,
-        }
-    }
-
-    Ok(locked_packages)
+    Ok(environment
+        .conda_repodata_records(platform)
+        .map_err(|err| anyhow!(err))?
+        .unwrap_or_default())
 }
 
 pub fn build_lockfile(
@@ -60,4 +50,23 @@ pub fn build_lockfile(
     }
 
     Ok(builder.finish())
+}
+
+/// Copies the project's locked environments under fixed installer names and local channels.
+pub fn build_bundle_lockfile(lockfile: &LockFile, environment_name: &str) -> LockFile {
+    let mut builder = LockFileBuilder::new();
+    for (name, environment) in lockfile.environments() {
+        let Some(suffix) = name.strip_prefix(environment_name) else {
+            continue;
+        };
+        let name = format!("default{suffix}");
+        builder.set_channels(&name, ["file:./"]);
+        builder.set_options(&name, environment.solve_options().clone());
+        for (platform, packages) in environment.conda_packages_by_platform() {
+            for package in packages {
+                builder.add_conda_package(&name, platform, package.clone());
+            }
+        }
+    }
+    builder.finish()
 }

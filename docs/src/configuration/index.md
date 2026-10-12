@@ -5,16 +5,14 @@ configuration, so you describe the environment once and reuse it for installers,
 containers, or other outputs. A minimal manifest looks like:
 
 ```toml
-name = "myapp"
-version = "1.2.0"
-author = "John Doe"
-license = "Proprietary"
+name = "portable-tar"
+version = "1.0.0"
+author = "Example Maintainers"
 channels = ["conda-forge"]
 platforms = ["linux-64", "osx-arm64"]
 
 [dependencies]
-python = "3.11.*"
-pandas = "^2.2"
+tar = "*"
 ```
 
 The remaining sections document each supported key, including optional tables

@@ -77,7 +77,11 @@ while IFS=$'\t' read -r name payload_mode control_rel root_rel _ filelist_rel; d
             exit 1
         fi
         if [ "$installed" -eq 0 ]; then
-            "$PKG_INSTALLER" "$PKG_PREFIX"
+            if [ "${PKG_SPLIT_DEPS:-0}" = "1" ] || [ -n "${PKG_SUBSET:-}" ]; then
+                "$PKG_INSTALLER" "$PKG_PREFIX"
+            else
+                "$PKG_INSTALLER" "$PKG_PREFIX" --components none
+            fi
             installed=1
         fi
         if [ "$payload_mode" = "files" ] && [ "$filelist_rel" != "-" ]; then

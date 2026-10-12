@@ -3,43 +3,47 @@
 //! High-level flow:
 //! 1. Load and validate the manifest, resolve target platforms, and prepare the environment.
 //! 2. Build installer bundles for the target platforms.
-//! 3. Gather split dependency file lists (if enabled) and compose dependency package inputs.
+//! 3. Gather dependency file lists for modular builds.
 //! 4. For each image/platform pair, write package_plan.tsv describing specs, roots, and payload lists.
 //! 5. Run the containerized build script, which installs payloads and emits RPM/DEB artifacts.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashSet},
     env, fs,
     path::{Path, PathBuf},
     time::Duration,
 };
 
 use anyhow::{Result, anyhow, bail};
-use rattler_conda_types::Platform;
 use std::os::unix::fs::PermissionsExt;
 use tempfile::Builder as TempDirBuilder;
 
 use crate::{
-    cli::PackageArgs, config::PackageFormat, installer, progress::Progress, workspace::Workspace,
+    cli::PackageArgs,
+    config::{PackageConfig, PackageFormat, PackageImageConfig},
+    progress::Progress,
+    workspace::Workspace,
 };
+mod bundle;
 mod dependency_package_files;
 mod model;
+mod modular;
 mod plan;
 mod render;
 mod runner;
 
 use super::{
-    LockMode,
-    context::load_manifest_context,
-    environment::prepare_environment,
-    push_download_summary,
-    runtime::{self},
+    LockMode, artifact_name,
+    context::{ManifestContext, load_manifest_context},
+    environment::{EnvironmentPreparation, prepare_environment},
+    installer::prepare_installers,
+    runtime::{self, RuntimeBinary},
 };
 
 const OUTPUT_DEST_PATH: &str = "/output";
 
 use dependency_package_files::collect_dependencies;
-use model::{DependencyPackage, ensure_linux_package_platform, install_prefix};
+use model::{PackageMode, PackageResult, install_prefix};
 use plan::write_package_plan;
 use runner::run_package;
 
@@ -57,17 +61,68 @@ pub async fn execute(
         platform,
         output_dir,
     } = args;
-
-    let manifest_ctx = load_manifest_context(manifest)?;
-    let workspace = Workspace::from_manifest_dir(&manifest_ctx.manifest_dir, work_dir)?;
+    let manifest = load_manifest_context(manifest)?;
+    let images = select_images(manifest.config.package(), image)?;
+    if images.is_empty() {
+        return Ok(());
+    }
+    let workspace = Workspace::from_manifest_dir(&manifest.manifest_dir, work_dir)?;
     let runtime = runtime::resolve_runtime(engine, engine_flags)?;
+    let platforms = platform
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let progress = Progress::stdout();
+    let prep = prepare_environment(&manifest, &workspace, platforms, lock_mode, &progress).await?;
+    let prefix = install_prefix(&manifest, &prep)?;
+    let output_root = match output_dir {
+        Some(path) => env::current_dir()?.join(path),
+        None => manifest.manifest_dir.clone(),
+    };
+    fs::create_dir_all(&output_root)?;
+    let packaging_root = workspace.native_packaging_dir();
+    fs::create_dir_all(&packaging_root)?;
+    let packaging_dir = TempDirBuilder::new()
+        .prefix(&format!("{}-", prep.environment_name))
+        .tempdir_in(&packaging_root)?;
+    let builds = plan_builds(
+        &manifest,
+        &prep,
+        &workspace,
+        &images,
+        packaging_dir.path(),
+        &output_root,
+        &progress,
+    )
+    .await?;
+    let results = build_packages(&runtime, &prefix, builds, &progress).await?;
+    drop(progress);
+    print_results(&results);
+    Ok(())
+}
 
-    let requested_images: std::collections::HashSet<String> = image.into_iter().collect();
-    let mut images_map = manifest_ctx.config.package().images.clone();
-    if !requested_images.is_empty() {
-        let missing: Vec<_> = requested_images
+fn select_images(
+    config: &PackageConfig,
+    requested: Vec<String>,
+) -> Result<Vec<(PackageMode, String, PackageImageConfig)>> {
+    let requested: HashSet<_> = requested.into_iter().collect();
+    let mut images: Vec<_> = [
+        (PackageMode::Bundle, &config.bundle),
+        (PackageMode::Modular, &config.modular),
+    ]
+    .into_iter()
+    .flat_map(|(mode, config)| {
+        config
+            .images
             .iter()
-            .filter(|name| !images_map.contains_key(*name))
+            .map(move |(name, image)| (mode, name.clone(), image.clone()))
+    })
+    .collect();
+    if !requested.is_empty() {
+        let missing: Vec<_> = requested
+            .iter()
+            .filter(|name| !images.iter().any(|(_, image_name, _)| image_name == *name))
             .cloned()
             .collect();
         if !missing.is_empty() {
@@ -76,226 +131,153 @@ pub async fn execute(
                 missing.join(", ")
             );
         }
-        images_map.retain(|name, _| requested_images.contains(name));
+        images.retain(|(_, name, _)| requested.contains(name));
     }
-    if images_map.is_empty() {
-        bail!("manifest must define at least one package image under [package.images]");
-    }
+    Ok(images)
+}
 
-    let requested_platforms = normalize_platforms(if platform.is_empty() {
-        vec![Platform::current()]
-    } else {
-        platform
-    });
-
-    for platform in &requested_platforms {
-        ensure_linux_package_platform(*platform)?;
-    }
-
-    let manifest_platforms = manifest_ctx.config.platforms().to_vec();
-    for platform in &requested_platforms {
-        if !manifest_platforms.contains(platform) {
-            bail!(
-                "selected platform '{}' is not listed in the manifest platforms",
-                platform.as_str()
-            );
-        }
-    }
-
-    let progress = Progress::stdout();
-    let mut final_messages = Vec::new();
-
-    let (prep, download_summary, _) = prepare_environment(
-        &manifest_ctx,
-        &workspace,
-        requested_platforms.clone(),
-        lock_mode,
-        &progress,
+async fn plan_builds(
+    manifest: &ManifestContext,
+    prep: &EnvironmentPreparation,
+    workspace: &Workspace,
+    images: &[(PackageMode, String, PackageImageConfig)],
+    packaging_root: &Path,
+    output_root: &Path,
+    progress: &Progress,
+) -> Result<Vec<plan::NativeBuild>> {
+    let bundle_subsets: Vec<_> = std::iter::once(None)
+        .chain(
+            manifest
+                .config
+                .subsets()
+                .keys()
+                .map(|name| Some(name.as_str())),
+        )
+        .collect();
+    let modular = images
+        .iter()
+        .any(|(mode, _, _)| *mode == PackageMode::Modular);
+    let installers = prepare_installers(
+        prep,
+        &manifest.config,
+        &packaging_root.join("installers"),
+        progress,
     )
     .await?;
-
-    let split_deps = manifest_ctx.config.package().split_deps;
-
-    let prefix = install_prefix(&manifest_ctx, &prep)?;
-    let output_root = match output_dir {
-        Some(path) => env::current_dir()?.join(path),
-        None => manifest_ctx.manifest_dir.clone(),
-    };
-    fs::create_dir_all(&output_root)?;
-
-    let packaging_root = workspace.native_packaging_dir();
-    fs::create_dir_all(&packaging_root)?;
-    let _packaging_tempdir = TempDirBuilder::new()
-        .prefix(&format!("{}-", prep.environment_name))
-        .tempdir_in(&packaging_root)?;
-    let packaging_dir = _packaging_tempdir.path();
-
-    let installer_summary = runtime::format_platform_list(&prep.target_platforms);
-    let installer_label = format!("Prepare installer bundle [{installer_summary}]");
-    let installer_step = progress.step(installer_label.clone());
-    let prep_ref = &prep;
-    let installer_platforms = prep.target_platforms.clone();
-    let installer_root = packaging_dir.join("installers");
-    let installers = installer_step
-        .run_with(
-            Some(Duration::from_millis(120)),
-            move |handle| async move {
-                let mut counter = handle.counter(installer_platforms.len());
-                let paths = installer::create_installers(
-                    &installer_root,
-                    &prep_ref.environment_name,
-                    &prep_ref.channel_dir,
-                    &installer_platforms,
-                    &prep_ref.bundle_metadata,
-                    &mut counter,
-                )?;
-                Ok(installer_platforms.iter().copied().zip(paths).collect())
-            },
-            move |_: &Vec<(Platform, PathBuf)>| installer_label.clone(),
-        )
-        .await?;
-    let installer_map: HashMap<Platform, PathBuf> = installers.into_iter().collect();
-
-    let rpm_script = render::write_script(PackageFormat::Rpm, packaging_dir)?;
-    let deb_script = render::write_script(PackageFormat::Deb, packaging_dir)?;
-
-    struct PlatformBatch {
-        platform: Platform,
-        dependency_packages: Vec<DependencyPackage>,
-    }
-
-    let mut platform_batches = Vec::new();
+    let rpm_script = render::write_script(PackageFormat::Rpm, packaging_root)?;
+    let deb_script = render::write_script(PackageFormat::Deb, packaging_root)?;
+    let mut builds = Vec::new();
     for platform in &prep.target_platforms {
-        let dependency_packages = if split_deps {
-            collect_dependencies(&manifest_ctx, &prep, &workspace, *platform).await?
+        let dependencies = if modular {
+            collect_dependencies(prep, workspace, *platform).await?
         } else {
             Vec::new()
         };
-
-        platform_batches.push(PlatformBatch {
-            platform: *platform,
-            dependency_packages,
-        });
+        for (mode, name, image) in images {
+            let subsets = match mode {
+                PackageMode::Bundle => bundle_subsets.as_slice(),
+                PackageMode::Modular => &[None],
+            };
+            let format = image.package_type;
+            let script_path = match format {
+                PackageFormat::Rpm => &rpm_script,
+                PackageFormat::Deb => &deb_script,
+            };
+            let output_dir = output_root.join(mode.label()).join(name);
+            fs::create_dir_all(&output_dir)?;
+            for subset in subsets {
+                let artifact = artifact_name(manifest.config.name(), *subset);
+                let installer_path = installers
+                    .get(&artifact)
+                    .and_then(|paths| paths.get(platform))
+                    .ok_or_else(|| {
+                        anyhow!("no installer available for {artifact} on {platform}")
+                    })?;
+                let layout_name = match mode {
+                    PackageMode::Bundle => {
+                        format!("{name}/{}", artifact_name(manifest.config.name(), *subset))
+                    }
+                    PackageMode::Modular => name.clone(),
+                };
+                let plan_rel = write_package_plan(
+                    format,
+                    &layout_name,
+                    *platform,
+                    packaging_root,
+                    plan::PackagePlanInput {
+                        mode: *mode,
+                        subset: *subset,
+                        dependency_packages: &dependencies,
+                    },
+                    manifest,
+                    prep,
+                )?;
+                builds.push(plan::NativeBuild {
+                    format,
+                    image_name: name.clone(),
+                    image: image.clone(),
+                    platform: *platform,
+                    script_path: script_path.clone(),
+                    output_dir: output_dir.clone(),
+                    installer_path: installer_path.clone(),
+                    packaging_root: packaging_root.to_path_buf(),
+                    plan_rel,
+                    subset: subset.map(str::to_owned),
+                    mode: *mode,
+                });
+            }
+        }
     }
+    Ok(builds)
+}
 
-    let mut package_count = 0;
-    for batch in &platform_batches {
-        let per_image = 1 + batch.dependency_packages.len();
-        package_count += images_map.len() * per_image;
-    }
-
-    if package_count == 0 {
-        bail!("no native package jobs were scheduled");
-    }
-
-    let packaging_step = progress.step("Build native packages");
-    let runtime_clone = runtime.clone();
-    let prefix_clone = prefix.clone();
-
-    let results = packaging_step
+async fn build_packages(
+    runtime: &RuntimeBinary,
+    prefix: &str,
+    builds: Vec<plan::NativeBuild>,
+    progress: &Progress,
+) -> Result<Vec<PackageResult>> {
+    let count = builds.len();
+    progress
+        .step("Build native packages")
         .run_with(
             Some(Duration::from_millis(120)),
-            move |handle| async move {
-                let mut counter = handle.counter(package_count);
+            |handle| async move {
+                let mut counter = handle.counter(count);
                 let mut produced = Vec::new();
-                let mut completed = 0;
-
-                for batch in platform_batches.into_iter() {
-                    for (name, cfg) in images_map.iter() {
-                        let format = cfg.package_type;
-                        let script_path = match format {
-                            PackageFormat::Rpm => rpm_script.as_path(),
-                            PackageFormat::Deb => deb_script.as_path(),
-                        };
-                        let output_dir = output_root.join(name);
-                        std::fs::create_dir_all(&output_dir)?;
-                        let plan_rel = write_package_plan(
-                            format,
-                            name,
-                            batch.platform,
-                            packaging_dir,
-                            &batch.dependency_packages,
-                            &manifest_ctx,
-                            &prep,
-                        )?;
-
-                        let installer_path =
-                            installer_map.get(&batch.platform).cloned().ok_or_else(|| {
-                                anyhow!(
-                                    "no installer available for platform '{}'",
-                                    batch.platform.as_str()
-                                )
-                            })?;
-
-                        let job = plan::NativeBuild {
-                            format,
-                            image_name: name.clone(),
-                            image: cfg.clone(),
-                            platform: batch.platform,
-                            script_path: script_path.to_path_buf(),
-                            output_dir,
-                            installer_path,
-                            packaging_root: packaging_dir.to_path_buf(),
-                            plan_rel,
-                        };
-
-                        let result = run_package(&runtime_clone, &prefix_clone, job).await?;
-                        completed += result.len();
-                        produced.extend(result);
-                        counter.set(completed);
-                    }
+                for (index, build) in builds.into_iter().enumerate() {
+                    produced.extend(run_package(runtime, prefix, build).await?);
+                    counter.set(index + 1);
                 }
-
                 Ok(produced)
             },
-            move |produced| {
-                format!(
-                    "Build native packages ({}/{})",
-                    produced.len(),
-                    package_count
-                )
-            },
+            |_| format!("Build native packages ({count}/{count})"),
         )
-        .await?;
+        .await
+}
 
-    push_download_summary(&mut final_messages, &download_summary);
-
-    let rpm_count = results
-        .iter()
-        .filter(|result| result.format == PackageFormat::Rpm)
-        .count();
-    let deb_count = results
-        .iter()
-        .filter(|result| result.format == PackageFormat::Deb)
-        .count();
-
-    if rpm_count > 0 {
-        final_messages.push(format!("Generated {rpm_count} RPM package(s)."));
+fn print_results(results: &[PackageResult]) {
+    for (format, label) in [(PackageFormat::Rpm, "RPM"), (PackageFormat::Deb, "DEB")] {
+        let count = results
+            .iter()
+            .filter(|result| result.format == format)
+            .count();
+        if count > 0 {
+            println!("Generated {count} {label} package(s).");
+        }
     }
-    if deb_count > 0 {
-        final_messages.push(format!("Generated {deb_count} DEB package(s)."));
-    }
-
     if !results.is_empty() {
-        final_messages.push("Native package outputs:".to_string());
-        for result in &results {
-            final_messages.push(format!(
+        println!("Native package outputs:");
+        for result in results {
+            println!(
                 "  - [{} {} {}] {}",
                 result.format.label(),
                 result.platform.as_str(),
                 result.image_name,
-                result.path.display()
-            ));
+                result.path.display(),
+            );
         }
     }
-
-    drop(progress);
-
-    for message in final_messages {
-        println!("{message}");
-    }
-
-    Ok(())
 }
 
 /// Write a container packaging script and mark it executable for runtime use.
@@ -309,16 +291,4 @@ fn write_script(path: &Path, contents: &str) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Deduplicate platforms while preserving their original order.
-fn normalize_platforms(platforms: Vec<Platform>) -> Vec<Platform> {
-    let mut seen = std::collections::HashSet::new();
-    let mut ordered = Vec::new();
-    for platform in platforms {
-        if seen.insert(platform) {
-            ordered.push(platform);
-        }
-    }
-    ordered
 }

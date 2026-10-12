@@ -1,13 +1,29 @@
-use std::{env, path::PathBuf, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    env,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
+use rattler_conda_types::Platform;
 
-use crate::{cli::InstallerArgs, installer, progress::Progress, workspace::Workspace};
+use crate::{
+    cli::InstallerArgs, config::CondaDistConfig, progress::Progress, workspace::Workspace,
+};
 
 use super::{
-    LockMode, context::load_manifest_context, environment::prepare_environment,
-    push_download_summary,
+    LockMode,
+    context::load_manifest_context,
+    environment::{EnvironmentPreparation, prepare_environment},
 };
+
+mod bundle;
+
+pub use bundle::BundleMetadataManifest;
+use bundle::create_installers;
+
+pub(super) type InstallerPaths = BTreeMap<String, BTreeMap<Platform, PathBuf>>;
 
 pub async fn execute(
     args: InstallerArgs,
@@ -21,70 +37,84 @@ pub async fn execute(
     } = args;
 
     let manifest_ctx = load_manifest_context(manifest)?;
-    let environment_name = manifest_ctx.config.name();
     let workspace = Workspace::from_manifest_dir(&manifest_ctx.manifest_dir, work_dir)?;
 
-    let default_script_path = manifest_ctx.manifest_dir.join(environment_name);
-    let requested_path = match output_dir {
-        Some(path) => env::current_dir()?.join(path),
-        None => default_script_path,
-    };
-    let script_path = installer::resolve_script_path(requested_path, environment_name)?;
-
-    let target_platforms = manifest_ctx.config.platforms().to_vec();
+    let installer_platforms: Vec<_> = manifest_ctx
+        .config
+        .platforms()
+        .iter()
+        .copied()
+        .filter(|platform| *platform != Platform::NoArch && installer_platform.contains(platform))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if installer_platforms.is_empty() {
+        bail!("no installer platforms selected from manifest");
+    }
 
     let progress = Progress::stdout();
-    let mut final_messages = Vec::new();
 
-    let (prep, download_summary, _) = prepare_environment(
+    let prep = prepare_environment(
         &manifest_ctx,
         &workspace,
-        target_platforms,
+        installer_platforms.clone(),
         lock_mode,
         &progress,
     )
     .await?;
 
-    let installer_platforms =
-        installer::resolve_installer_platforms(installer_platform, &prep.target_platforms)?;
-
-    let total_installers = installer_platforms.len();
+    let output_dir = resolve_output_dir(output_dir, &manifest_ctx.manifest_dir)?;
+    let total_installers = installer_platforms.len() * (manifest_ctx.config.subsets().len() + 1);
     let installer_step = progress.step("Create installers");
-    let script_path_ref = &script_path;
+    let output_dir_ref = &output_dir;
     let prep_ref = &prep;
-    let installer_platforms_ref = &installer_platforms;
+    let config = &manifest_ctx.config;
     let written_paths = installer_step
         .run_with(
             Some(Duration::from_millis(120)),
             move |handle| async move {
                 let mut counter = handle.counter(total_installers);
-                installer::create_installers(
-                    script_path_ref,
-                    &prep_ref.environment_name,
-                    &prep_ref.channel_dir,
-                    installer_platforms_ref,
-                    &prep_ref.bundle_metadata,
-                    &mut counter,
-                )
+                create_installers(output_dir_ref, config, prep_ref, &mut counter)
             },
-            move |paths| format!("Create installers ({}/{total_installers})", paths.len()),
+            move |_| format!("Create installers ({total_installers}/{total_installers})"),
         )
         .await?;
 
-    push_download_summary(&mut final_messages, &download_summary);
-
+    drop(progress);
     if !written_paths.is_empty() {
-        final_messages.push("Installer outputs:".to_string());
-        for path in written_paths {
-            final_messages.push(format!("  - {}", path.display()));
+        println!("Installer outputs:");
+        for path in written_paths.into_values().flat_map(BTreeMap::into_values) {
+            println!("  - {}", path.display());
         }
     }
 
-    drop(progress);
-
-    for message in final_messages {
-        println!("{message}");
-    }
-
     Ok(())
+}
+
+pub(super) async fn prepare_installers(
+    prep: &EnvironmentPreparation,
+    config: &CondaDistConfig,
+    output_dir: &Path,
+    progress: &Progress,
+) -> Result<InstallerPaths> {
+    let count = prep.target_platforms.len() * (config.subsets().len() + 1);
+    progress
+        .step("Prepare installer bundles")
+        .run_with(
+            Some(Duration::from_millis(120)),
+            |handle| async move {
+                let mut counter = handle.counter(count);
+                create_installers(output_dir, config, prep, &mut counter)
+            },
+            |_| "Prepare installer bundles".to_string(),
+        )
+        .await
+}
+
+/// Defaults to the manifest directory; relative output directories use the current directory.
+fn resolve_output_dir(output_dir: Option<PathBuf>, manifest_dir: &Path) -> Result<PathBuf> {
+    Ok(match output_dir {
+        Some(path) => env::current_dir()?.join(path),
+        None => manifest_dir.to_path_buf(),
+    })
 }

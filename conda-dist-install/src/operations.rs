@@ -1,12 +1,30 @@
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use rattler::install::Installer;
 
 use crate::bundle::BundleData;
 
-pub async fn install(prefix: &Path, bundle: &BundleData) -> Result<()> {
-    let record_count = bundle.records.len();
+pub async fn install(
+    prefix: &Path,
+    bundle: &BundleData,
+    components: Option<&[String]>,
+) -> Result<()> {
+    match std::fs::symlink_metadata(prefix) {
+        Ok(_) => bail!(
+            "installation destination {} already exists",
+            prefix.display()
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error).context(format!(
+                "failed to inspect installation destination {}",
+                prefix.display()
+            ));
+        }
+    }
+    let records = bundle.records_for_components(components)?;
+    let record_count = records.len();
     let cache_dir = tempfile::tempdir().context("failed to prepare temporary cache directory")?;
     let package_cache = rattler::package_cache::PackageCache::new(cache_dir.path());
     let installer = Installer::new()
@@ -14,7 +32,7 @@ pub async fn install(prefix: &Path, bundle: &BundleData) -> Result<()> {
         .with_package_cache(package_cache);
 
     let result = installer
-        .install(prefix, bundle.records.clone())
+        .install(prefix, records)
         .await
         .context("failed to complete the installation")?;
 
@@ -28,7 +46,7 @@ pub async fn install(prefix: &Path, bundle: &BundleData) -> Result<()> {
     );
     println!("Maintainer: {}", bundle.metadata.author);
     println!(
-        "Applied {installs} updates and removed {removals} items (bundle contained {count} components for {platform})",
+        "Applied {installs} updates and removed {removals} items (selection contained {count} packages for {platform})",
         installs = installed,
         removals = removed,
         count = record_count,

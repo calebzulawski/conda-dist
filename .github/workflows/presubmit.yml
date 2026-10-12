@@ -28,9 +28,8 @@ jobs:
       - name: Cargo clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-  cli-tests:
-    name: CLI tests
-    needs: bootstrap-installer
+  workspace-tests:
+    name: Workspace tests
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
@@ -41,8 +40,8 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
-      - name: Run CLI tests
-        run: cargo test -p conda-dist --test cli
+      - name: Run workspace tests
+        run: cargo test --workspace
 
   bootstrap-installer:
     name: Build installers for release
@@ -153,12 +152,14 @@ jobs:
           name: conda-dist-${{ matrix.platform }}
           path: release
       - name: Build example installers
-        run: chmod +x release/conda-dist && release/conda-dist installer examples/bash.toml
+        run: |
+          chmod +x release/conda-dist
+          release/conda-dist installer examples/tar.toml --output-dir installers
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
           name: installers-built-on-${{ matrix.platform }}
-          path: examples/portable-bash-*
+          path: installers
           if-no-files-found: error
 
   build-container-images:
@@ -195,16 +196,13 @@ jobs:
         env:
           RUNTIME: ${{ matrix.runtime }}
         run: |
-          mkdir -p containers
           ENGINE=$(command -v "$RUNTIME")
-          OUTPUT=containers/portable-bash-${RUNTIME}.oci.tar
-          echo "OUTPUT_FILE=$OUTPUT" >> "$GITHUB_ENV"
-          release/conda-dist container examples/bash.toml --engine "$ENGINE" --oci-output "$OUTPUT"
+          release/conda-dist container examples/tar.toml --engine "$ENGINE"
       - name: Upload container image
         uses: actions/upload-artifact@v4
         with:
           name: container-${{ matrix.runtime }}
-          path: ${{ env.OUTPUT_FILE }}
+          path: examples/portable-tar*-container.oci.tar
           if-no-files-found: error
 
   build-native-packages:
@@ -213,11 +211,6 @@ jobs:
     runs-on: ${{ matrix.platform.os }}
     strategy:
       matrix:
-        manifest:
-          - path: examples/bash.toml
-            artifact: native-packages
-          - path: examples/bash-split-deps.toml
-            artifact: native-packages-split
         platform:
           - os: ubuntu-24.04
             platform: linux-64
@@ -235,21 +228,31 @@ jobs:
         run: chmod +x release/conda-dist
       - name: Build native packages
         run: |
-          release/conda-dist package ${{ matrix.manifest.path }} \
+          release/conda-dist package examples/tar.toml \
             --output-dir native-packages
       - name: Upload native packages
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.manifest.artifact }}-${{ matrix.platform.platform }}
+          name: native-packages-${{ matrix.platform.platform }}
           path: native-packages
           if-no-files-found: error
 
   test-installers:
-    name: Test example application installers
+    name: Test installer (${{ matrix.installation.name }}, ${{ matrix.from }} → ${{ matrix.host.platform }})
     needs: build-installers
     runs-on: ${{ matrix.host.os }}
     strategy:
+      fail-fast: false
       matrix:
+        installation:
+          - name: gzip component
+            bundle: portable-tar
+            components: gzip
+            zstd: false
+          - name: compressed subset
+            bundle: portable-tar-compressed
+            components: all
+            zstd: true
         host:
           - os: ubuntu-24.04
             platform: linux-64
@@ -271,18 +274,39 @@ jobs:
           name: installers-built-on-${{ matrix.from }}
       - name: Run installer
         run: |
-          chmod +x portable-bash-${{ matrix.host.platform }}
-          ./portable-bash-${{ matrix.host.platform }} install-dir
-      - name: Test installation
-        run: install-dir/bin/bash --version
+          chmod +x ${{ matrix.installation.bundle }}-${{ matrix.host.platform }}
+          ./${{ matrix.installation.bundle }}-${{ matrix.host.platform }} install-dir --components ${{ matrix.installation.components }}
+      - name: Test tar
+        run: install-dir/bin/tar --version
+      - name: Test gzip compression
+        run: env PATH="$PWD/install-dir/bin" install-dir/bin/tar --gzip -cf /dev/null --files-from /dev/null
+      - name: Test zstd compression
+        if: ${{ matrix.installation.zstd }}
+        run: env PATH="$PWD/install-dir/bin" install-dir/bin/tar --zstd -cf /dev/null --files-from /dev/null
+      - name: Check unselected zstd is absent
+        if: ${{ !matrix.installation.zstd }}
+        run: test ! -e install-dir/bin/zstd
 
   test-native-packages:
-    name: Test example native packages
+    name: Test native packages (${{ matrix.installation.name }}, ${{ matrix.image.package_subdir }}, ${{ matrix.platform.platform }})
     needs: build-native-packages
     runs-on: ${{ matrix.platform.os }}
     strategy:
       fail-fast: false
       matrix:
+        installation:
+          - name: base bundle
+            mode: bundle
+            packages: portable-tar[-_][0-9]*
+            compressed: false
+          - name: compressed bundle
+            mode: bundle
+            packages: portable-tar-compressed*
+            compressed: true
+          - name: modular packages
+            mode: modular
+            packages: '*'
+            compressed: true
         image:
           - container: redhat/ubi10
             package_subdir: redhat
@@ -295,28 +319,36 @@ jobs:
             platform: linux-64
           - os: ubuntu-24.04-arm
             platform: linux-aarch64
-        artifact:
-          - native-packages
-          - native-packages-split
     container: ${{ matrix.image.container }}
     steps:
       - name: Download native packages
         uses: actions/download-artifact@v5
         with:
-          name: ${{ matrix.artifact }}-${{ matrix.platform.platform }}
+          name: native-packages-${{ matrix.platform.platform }}
           path: native-packages
-      - name: Install package
+      - name: Install packages
+        run: ${{ matrix.image.install }} "$GITHUB_WORKSPACE/native-packages/${{ matrix.installation.mode }}/${{ matrix.image.package_subdir }}"/${{ matrix.installation.packages }}
+      - name: Test tar
+        run: /opt/portable-tar/bin/tar --version
+      - name: Test gzip compression
+        if: ${{ matrix.installation.compressed }}
+        run: env PATH=/opt/portable-tar/bin /opt/portable-tar/bin/tar --gzip -cf /dev/null --files-from /dev/null
+      - name: Test zstd compression
+        if: ${{ matrix.installation.compressed }}
+        run: env PATH=/opt/portable-tar/bin /opt/portable-tar/bin/tar --zstd -cf /dev/null --files-from /dev/null
+      - name: Check optional components are absent
+        if: ${{ !matrix.installation.compressed }}
         run: |
-          ${{ matrix.image.install }} $GITHUB_WORKSPACE/native-packages/${{ matrix.image.package_subdir }}/*
-      - name: Run package test
-        run: /opt/portable-bash/bin/bash --version
+          test ! -e /opt/portable-tar/bin/gzip
+          test ! -e /opt/portable-tar/bin/zstd
 
   test-container-images:
-    name: Test example container images
+    name: Test container (${{ matrix.bundle }}, ${{ matrix.source }} → ${{ matrix.runtime }}, ${{ matrix.host.arch }})
     needs: build-container-images
     strategy:
       fail-fast: false
       matrix:
+        bundle: [portable-tar, portable-tar-compressed]
         runtime: [docker, podman]
         host:
           - os: ubuntu-24.04
@@ -334,6 +366,8 @@ jobs:
               options: --privileged
     runs-on: ${{ matrix.host.os }}
     container: ${{ matrix.container || null }}
+    env:
+      IMAGE: docker.io/library/${{ matrix.bundle }}:1.0.0
     steps:
       - name: Install Docker prerequisites
         if: ${{ matrix.runtime == 'docker' }}
@@ -349,8 +383,12 @@ jobs:
           name: container-${{ matrix.source }}
           path: containers
       - name: Load image
-        run: |
-          docker image rm -f registry.example.com/example/portable-bash:1.0.0 || true
-          skopeo copy oci-archive:containers/portable-bash-${{ matrix.source }}.oci.tar ${{ matrix.storage }}:registry.example.com/example/portable-bash:1.0.0
-      - name: Run container test
-        run: ${{ matrix.runtime }} run --rm registry.example.com/example/portable-bash:1.0.0 /opt/portable-bash/bin/bash --version
+        run: skopeo copy oci-archive:containers/${{ matrix.bundle }}-container.oci.tar ${{ matrix.storage }}:"$IMAGE"
+      - name: Test tar
+        run: ${{ matrix.runtime }} run --rm "$IMAGE" /opt/portable-tar/bin/tar --version
+      - name: Test gzip compression
+        if: ${{ matrix.bundle == 'portable-tar-compressed' }}
+        run: ${{ matrix.runtime }} run --rm --env PATH=/opt/portable-tar/bin "$IMAGE" /opt/portable-tar/bin/tar --gzip -cf /dev/null --files-from /dev/null
+      - name: Test zstd compression
+        if: ${{ matrix.bundle == 'portable-tar-compressed' }}
+        run: ${{ matrix.runtime }} run --rm --env PATH=/opt/portable-tar/bin "$IMAGE" /opt/portable-tar/bin/tar --zstd -cf /dev/null --files-from /dev/null

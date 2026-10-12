@@ -3,16 +3,14 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 use rattler_conda_types::Platform;
 
-use crate::installer::InstallerPlatformSelection;
-
 #[derive(Debug, Parser)]
 #[command(version, about = "Build distributable artifacts from Conda environments", long_about = None)]
 pub struct Cli {
-    /// Workspace directory used for cached artifacts (defaults to <manifest>/.conda-dist)
+    /// Workspace directory used for cached artifacts (defaults to .conda-dist beside the manifest)
     #[arg(long = "work-dir", value_name = "PATH", global = true)]
     pub work_dir: Option<PathBuf>,
 
-    /// Require the existing lockfile and skip solving; fails if the lockfile is stale or missing
+    /// Require the existing lockfile; fails if the lockfile is stale or missing
     #[arg(long = "locked", global = true, conflicts_with = "unlock")]
     pub locked: bool,
 
@@ -63,17 +61,31 @@ pub struct InstallerArgs {
     #[arg(value_name = "MANIFEST", default_value = "conda-dist.toml")]
     pub manifest: PathBuf,
 
-    /// Optional directory to write the installer binary
+    /// Directory to write installers (defaults to the manifest directory)
     #[arg(long = "output-dir", alias = "output", value_name = "PATH")]
     pub output_dir: Option<PathBuf>,
 
-    /// Select which installer platform(s) to build
+    /// Select installer platforms: all, host, or a target platform
     #[arg(
         long = "installer-platform",
         value_name = "PLATFORM",
-        default_value = "all"
+        default_value = "all",
+        value_parser = parse_installer_platforms
     )]
-    pub installer_platform: InstallerPlatformSelection,
+    // Treat the resolved platform list as one CLI argument value.
+    pub installer_platform: std::vec::Vec<Platform>,
+}
+
+fn parse_installer_platforms(value: &str) -> Result<Vec<Platform>, String> {
+    let value = value.trim();
+    match value.to_ascii_lowercase().as_str() {
+        "all" => Ok(Platform::all().collect()),
+        "host" => Ok(vec![Platform::current()]),
+        _ => value
+            .parse::<Platform>()
+            .map(|platform| vec![platform])
+            .map_err(|error| error.to_string()),
+    }
 }
 
 #[derive(Debug, Args)]
@@ -85,10 +97,6 @@ pub struct ContainerArgs {
     /// Restrict the build to a single target platform
     #[arg(long = "platform", value_name = "PLATFORM")]
     pub platform: Option<Platform>,
-
-    /// Path to write the resulting OCI archive (defaults to <manifest-dir>/<name>-container.oci.tar)
-    #[arg(long = "oci-output", value_name = "PATH")]
-    pub oci_output: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -101,13 +109,28 @@ pub struct PackageArgs {
     #[arg(long = "image", value_name = "NAME")]
     pub image: Vec<String>,
 
-    /// Restrict native packaging to specific target platform(s) (defaults to host platform)
-    #[arg(long = "platform", value_name = "PLATFORM")]
+    /// Restrict native packaging to specific Linux target platform(s) (defaults to host platform)
+    #[arg(
+        long = "platform",
+        value_name = "PLATFORM",
+        default_values_t = [Platform::current()],
+        value_parser = parse_package_platform
+    )]
     pub platform: Vec<Platform>,
 
-    /// Output directory for generated packages (defaults to <manifest-dir>)
+    /// Output directory for generated packages (defaults to the manifest directory)
     #[arg(long = "output-dir", alias = "output", value_name = "PATH")]
     pub output_dir: Option<PathBuf>,
+}
+
+fn parse_package_platform(value: &str) -> Result<Platform, String> {
+    let platform = value.parse::<Platform>().map_err(|err| err.to_string())?;
+    if !platform.as_str().starts_with("linux-") {
+        return Err(format!(
+            "native package builds are only supported for linux platforms (received '{platform}')"
+        ));
+    }
+    Ok(platform)
 }
 
 pub fn parse() -> Cli {

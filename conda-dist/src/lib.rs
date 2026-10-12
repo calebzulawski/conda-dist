@@ -4,6 +4,5 @@ pub mod conda;
 pub mod config;
 pub mod downloader;
 pub mod filters;
-pub mod installer;
 pub mod progress;
 pub mod workspace;

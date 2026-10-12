@@ -15,6 +15,11 @@ async fn main() -> Result<()> {
 
     let cli = cli::parse(&project_name)?;
 
+    if cli.list_components {
+        listing::list_components(&launcher_metadata);
+        return Ok(());
+    }
+
     if cli.summary {
         let bundle = bundle::load_bundle()?;
         listing::print_bundle_summary(&bundle.metadata, &bundle.records, &bundle.channel_dir)?;
@@ -40,5 +45,5 @@ async fn main() -> Result<()> {
     })?;
 
     let bundle = bundle::load_bundle()?;
-    operations::install(&prefix, &bundle).await
+    operations::install(&prefix, &bundle, cli.components.as_deref()).await
 }

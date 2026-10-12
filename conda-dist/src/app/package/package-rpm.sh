@@ -70,7 +70,11 @@ while IFS=$'\t' read -r name payload_mode spec_rel topdir_rel release filelist_r
             exit 1
         fi
         if [ "$installed" -eq 0 ]; then
-            "$PKG_INSTALLER" "$PKG_PREFIX"
+            if [ "${PKG_SPLIT_DEPS:-0}" = "1" ] || [ -n "${PKG_SUBSET:-}" ]; then
+                "$PKG_INSTALLER" "$PKG_PREFIX"
+            else
+                "$PKG_INSTALLER" "$PKG_PREFIX" --components none
+            fi
             installed=1
         fi
         payload_root="$TOPDIR/SOURCES/payload-root"

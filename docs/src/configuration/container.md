@@ -1,20 +1,18 @@
 # Container Settings
 
-`[container]` configures OCI image output.
+`[container]` configures OCI image output. All fields are optional:
+
+- `base_image` — Base image for the application. Defaults to
+  `"gcr.io/distroless/base-debian12"`.
+- `prefix` — Absolute installation path in containers and native packages.
+  Defaults to `/opt/<name>` and is shared by the base and subsets.
+- `tag_template` — Image tag template. Defaults to `"{name}:{version}"`.
+  `{name}` expands to the application name or `<name>-<subset>`;
+  `{version}` expands to the application version.
 
 ```toml
 [container]
-base_image = "gcr.io/distroless/base-debian12"
-prefix = "/opt/env"
-tag_template = "registry.internal.example.com/analytics/{name}:{version}-py311"
+base_image = "debian:bookworm-slim"
+prefix = "/opt/portable-tar"
+tag_template = "registry.internal.example.com/tools/{name}:{version}"
 ```
-
-- `base_image` (optional) defaults to `gcr.io/distroless/base-debian12`.
-- `prefix` (optional) relocates the Conda environment inside the image. Supply
-  an absolute path; the default is `/opt/conda`.
-- `tag_template` (optional) renders the final tag. Only `{name}` and
-  `{version}` are recognised placeholders. The default template is 
-  `{name}:{version}`.
-
-Container builds emit `<name>-container.oci.tar` alongside the manifest unless
-you override the output location on the command line.
